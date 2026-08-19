@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -11,15 +10,11 @@ from config import (
     API_BASE_URL,
     API_MODE,
     DEVICE_ID,
-    DEVICE_SECRET,
-    MOCK_BASKET_ID,
     MOCK_CUSTOMER_ID,
     MOCK_CUSTOMER_NAME,
     REQUEST_TIMEOUT,
     SIMULATED_RFID_UID,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -37,7 +32,6 @@ class KitungaApiClient(Protocol):
 
     def send_detection(
         self,
-        basket_id: str,
         label: str,
         confidence: float,
         *,
@@ -45,10 +39,10 @@ class KitungaApiClient(Protocol):
     ) -> ApiResult:
         ...
 
-    def get_basket_status(self, basket_id: str) -> ApiResult:
+    def get_invoice_status(self) -> ApiResult:
         ...
 
-    def confirm_rfid_payment(self, basket_id: str, rfid_uid: str) -> ApiResult:
+    def confirm_rfid_payment(self, rfid_uid: str) -> ApiResult:
         ...
 
     def acknowledge_reset(self, command_id: str) -> ApiResult:
@@ -56,7 +50,7 @@ class KitungaApiClient(Protocol):
 
 
 class MockApiClient:
-    """In-memory simulator for the Raspberry client workflow only."""
+    """In-memory simulator for one active invoice on one Raspberry Pi."""
 
     def __init__(
         self,
@@ -65,7 +59,6 @@ class MockApiClient:
         known_rfid_uid: str = SIMULATED_RFID_UID,
         customer_name: str = MOCK_CUSTOMER_NAME,
         customer_id: str = MOCK_CUSTOMER_ID,
-        basket_id: str = MOCK_BASKET_ID,
     ) -> None:
         self.device_id = device_id
         self.known_rfid_uid = _normalize_uid(known_rfid_uid)
@@ -74,8 +67,7 @@ class MockApiClient:
             "name": customer_name,
             "display_name": customer_name,
         }
-        self.default_basket_id = basket_id
-        self._sessions: dict[str, dict[str, Any]] = {}
+        self._session: dict[str, Any] | None = None
 
     def start_session(self, rfid_uid: str) -> ApiResult:
         normalized_uid = _normalize_uid(rfid_uid)
@@ -86,48 +78,45 @@ class MockApiClient:
                 error="RFID card is not recognized by mock.",
             )
 
-        session = {
-            "basket_id": self.default_basket_id,
-            "customer": dict(self.customer),
-            "status": "ACTIVE",
-            "detections": [],
-            "items": {},
-            "rfid_uid": normalized_uid,
-        }
-        self._sessions[self.default_basket_id] = session
+        if self._session is None or self._session["status"] == "PAID":
+            self._session = {
+                "customer": dict(self.customer),
+                "status": "ACTIVE",
+                "detections": [],
+                "items": {},
+                "rfid_uid": normalized_uid,
+            }
         return ApiResult(
             ok=True,
-            status="ACTIVE",
+            status=self._session["status"],
             data={
                 "device_id": self.device_id,
-                "basket_id": self.default_basket_id,
                 "customer": dict(self.customer),
-                "mock_items": _mock_items_payload(session),
-                "status": "ACTIVE",
-                "message": "Mock session started",
+                "mock_items": _mock_items_payload(self._session),
+                "status": self._session["status"],
+                "message": "Mock invoice active",
             },
         )
 
     def send_detection(
         self,
-        basket_id: str,
         label: str,
         confidence: float,
         *,
         detection_id: str | None = None,
     ) -> ApiResult:
-        session = self._sessions.get(basket_id)
+        session = self._session
         if session is None:
             return ApiResult(
                 ok=False,
-                status="NOT_FOUND",
-                error=f"Mock basket not found: {basket_id}",
+                status="NO_ACTIVE_INVOICE",
+                error="Mock invoice is not active.",
             )
         if session["status"] != "ACTIVE":
             return ApiResult(
                 ok=False,
                 status=session["status"],
-                error=f"Mock basket is not active: {session['status']}",
+                error=f"Mock invoice is not active: {session['status']}",
             )
 
         detection = {
@@ -142,7 +131,6 @@ class MockApiClient:
             ok=True,
             status="PRODUCT_ADDED",
             data={
-                "basket_id": basket_id,
                 "label": label,
                 "confidence": detection["confidence"],
                 "accepted": True,
@@ -152,33 +140,26 @@ class MockApiClient:
             },
         )
 
-    def get_basket_status(self, basket_id: str) -> ApiResult:
-        session = self._sessions.get(basket_id)
-        if session is None:
-            return ApiResult(
-                ok=False,
-                status="NOT_FOUND",
-                error=f"Mock basket not found: {basket_id}",
-            )
-
+    def get_invoice_status(self) -> ApiResult:
+        if self._session is None:
+            return ApiResult(ok=True, status="IDLE", data={"status": "IDLE"})
         return ApiResult(
             ok=True,
-            status=session["status"],
+            status=self._session["status"],
             data={
-                "basket_id": basket_id,
-                "status": session["status"],
-                "detections_count": len(session["detections"]),
-                "mock_items": _mock_items_payload(session),
+                "status": self._session["status"],
+                "detections_count": len(self._session["detections"]),
+                "mock_items": _mock_items_payload(self._session),
             },
         )
 
-    def confirm_rfid_payment(self, basket_id: str, rfid_uid: str) -> ApiResult:
-        session = self._sessions.get(basket_id)
+    def confirm_rfid_payment(self, rfid_uid: str) -> ApiResult:
+        session = self._session
         if session is None:
             return ApiResult(
                 ok=False,
-                status="NOT_FOUND",
-                error=f"Mock basket not found: {basket_id}",
+                status="NO_ACTIVE_INVOICE",
+                error="Mock invoice is not active.",
             )
         if _normalize_uid(rfid_uid) != session["rfid_uid"]:
             return ApiResult(
@@ -190,7 +171,7 @@ class MockApiClient:
             return ApiResult(
                 ok=False,
                 status=session["status"],
-                error="Mock basket is no longer available for payment",
+                error="Mock invoice is no longer available for payment",
             )
 
         session["status"] = "PAID"
@@ -198,7 +179,6 @@ class MockApiClient:
             ok=True,
             status="PAID",
             data={
-                "basket_id": basket_id,
                 "status": "PAID",
                 "payment_status": "PAID",
                 "mock_items": _mock_items_payload(session),
@@ -209,17 +189,14 @@ class MockApiClient:
     def acknowledge_reset(self, command_id: str) -> ApiResult:
         return ApiResult(ok=True, status="ACKNOWLEDGED", data={"command_id": command_id})
 
-    def get_mock_basket(self, basket_id: str | None = None) -> dict[str, int]:
-        session = self._sessions.get(basket_id or self.default_basket_id)
-        if session is None:
+    def get_mock_invoice(self) -> dict[str, int]:
+        if self._session is None:
             return {}
-        return dict(session.get("items", {}))
+        return dict(self._session.get("items", {}))
 
-    def reset_session(self, basket_id: str | None = None) -> None:
-        if basket_id is None:
-            self._sessions.clear()
-            return
-        self._sessions.pop(basket_id, None)
+    def reset_session(self) -> None:
+        self._session = None
+
 
 def _mock_items_payload(session: dict[str, Any]) -> list[dict[str, Any]]:
     items = session.get("items") or {}
@@ -231,12 +208,9 @@ def _mock_items_payload(session: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 class RealApiClient:
-    """HTTP client for the future Django contract."""
+    """HTTP client whose only persistent identity is the configured device_id."""
 
-    START_SESSION_PATH = "/api/iot/sessions/start/"
-    SEND_DETECTION_PATH = "/api/iot/baskets/{basket_id}/detections/"
-    BASKET_STATUS_PATH = "/api/iot/baskets/{basket_id}/status/"
-    CONFIRM_PAYMENT_PATH = "/api/iot/baskets/{basket_id}/rfid-payment/"
+    INVOICE_ROOT = "/api/iot/devices/{device_id}/invoice"
     ACK_RESET_PATH = "/api/v1/devices/{device_id}/commands/{command_id}/ack"
 
     def __init__(
@@ -244,43 +218,40 @@ class RealApiClient:
         *,
         base_url: str = API_BASE_URL,
         device_id: str = DEVICE_ID,
-        device_secret: str = DEVICE_SECRET,
         timeout: float = REQUEST_TIMEOUT,
         session: Any | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.device_id = device_id
-        self.device_secret = device_secret
         self.timeout = timeout
         self.session = session or requests.Session()
-        self._pending_detection_keys: dict[tuple[str, str], str] = {}
-        self._pending_payment_keys: dict[tuple[str, str], str] = {}
+        self._pending_detection_keys: dict[str, str] = {}
+        self._pending_payment_keys: dict[str, str] = {}
+
+    @property
+    def invoice_root(self) -> str:
+        return self.INVOICE_ROOT.format(device_id=self.device_id)
 
     def start_session(self, rfid_uid: str) -> ApiResult:
         return self._request(
             "POST",
-            self.START_SESSION_PATH,
-            json_data={
-                "device_id": self.device_id,
-                "rfid_uid": rfid_uid,
-            },
+            f"{self.invoice_root}/start/",
+            json_data={"rfid_uid": _normalize_uid(rfid_uid)},
         )
 
     def send_detection(
         self,
-        basket_id: str,
         label: str,
         confidence: float,
         *,
         detection_id: str | None = None,
     ) -> ApiResult:
-        request_key = (basket_id, detection_id or str(uuid.uuid4()))
+        request_key = detection_id or str(uuid.uuid4())
         idempotency_key = self._pending_detection_keys.setdefault(request_key, str(uuid.uuid4()))
         result = self._request(
             "POST",
-            self.SEND_DETECTION_PATH.format(basket_id=basket_id),
+            f"{self.invoice_root}/detections/",
             json_data={
-                "device_id": self.device_id,
                 "label": label,
                 "confidence": round(float(confidence), 4),
             },
@@ -290,27 +261,20 @@ class RealApiClient:
             self._pending_detection_keys.pop(request_key, None)
         return result
 
-    def get_basket_status(self, basket_id: str) -> ApiResult:
-        return self._request(
-            "GET",
-            self.BASKET_STATUS_PATH.format(basket_id=basket_id),
-        )
+    def get_invoice_status(self) -> ApiResult:
+        return self._request("GET", f"{self.invoice_root}/status/")
 
-    def confirm_rfid_payment(self, basket_id: str, rfid_uid: str) -> ApiResult:
+    def confirm_rfid_payment(self, rfid_uid: str) -> ApiResult:
         normalized_uid = _normalize_uid(rfid_uid)
-        request_key = (basket_id, normalized_uid)
-        idempotency_key = self._pending_payment_keys.setdefault(request_key, str(uuid.uuid4()))
+        idempotency_key = self._pending_payment_keys.setdefault(normalized_uid, str(uuid.uuid4()))
         result = self._request(
             "POST",
-            self.CONFIRM_PAYMENT_PATH.format(basket_id=basket_id),
-            json_data={
-                "device_id": self.device_id,
-                "rfid_uid": normalized_uid,
-            },
+            f"{self.invoice_root}/rfid-payment/",
+            json_data={"rfid_uid": normalized_uid},
             idempotency_key=idempotency_key,
         )
         if result.status_code is not None:
-            self._pending_payment_keys.pop(request_key, None)
+            self._pending_payment_keys.pop(normalized_uid, None)
         return result
 
     def acknowledge_reset(self, command_id: str) -> ApiResult:
@@ -328,16 +292,8 @@ class RealApiClient:
         json_data: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> ApiResult:
-        if not self.device_secret:
-            return ApiResult(
-                ok=False,
-                status="DEVICE_SECRET_MISSING",
-                error="DEVICE_SECRET is missing. Add the provisioned device secret to .env and restart the Pi client.",
-            )
         url = f"{self.base_url}{path}"
-        headers = {"Accept": "application/json", "X-Device-Code": self.device_id}
-        if self.device_secret:
-            headers["Authorization"] = f"Device {self.device_secret}"
+        headers = {"Accept": "application/json"}
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
         try:
@@ -370,7 +326,7 @@ class RealApiClient:
                     ok=False,
                     status="DEVICE_UNAUTHORIZED",
                     data=data if isinstance(data, dict) else {},
-                    error="Device authentication was rejected (401). Verify DEVICE_ID and DEVICE_SECRET in .env, then restart the Pi client.",
+                    error="Device identifier was rejected (401). Verify DEVICE_ID and that the device is enabled in Django.",
                     status_code=response.status_code,
                 )
             if response.status_code == 404 and not payload_status:
@@ -397,7 +353,6 @@ class RealApiClient:
                 error=json_error,
                 status_code=response.status_code,
             )
-
         if not isinstance(data, dict):
             return ApiResult(
                 ok=False,
@@ -405,7 +360,6 @@ class RealApiClient:
                 error="Backend JSON response is not an object",
                 status_code=response.status_code,
             )
-
         return ApiResult(
             ok=True,
             status=_status_from_payload(data),
@@ -436,7 +390,7 @@ def _normalize_uid(uid: str) -> str:
 def _status_from_payload(data: Any) -> str | None:
     if not isinstance(data, dict):
         return None
-    for key in ("status", "session_status", "basket_status", "payment_status"):
+    for key in ("status", "invoice_status", "session_status", "payment_status"):
         value = data.get(key)
         if value:
             return str(value).upper()

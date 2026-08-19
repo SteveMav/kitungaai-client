@@ -321,14 +321,13 @@ class _Commands:
         if not started.ok:
             return 1
 
-        basket_id = str(started.data.get("basket_id"))
-        added = client.send_detection(basket_id, args.label, args.confidence)
+        added = client.send_detection(args.label, args.confidence)
         print(f"send_detection ok={added.ok} status={added.status} data={added.data} error={added.error}")
 
-        status = client.get_basket_status(basket_id)
-        print(f"get_basket_status ok={status.ok} status={status.status} data={status.data} error={status.error}")
+        status = client.get_invoice_status()
+        print(f"get_invoice_status ok={status.ok} status={status.status} data={status.data} error={status.error}")
 
-        paid = client.confirm_rfid_payment(basket_id, args.rfid_uid)
+        paid = client.confirm_rfid_payment(args.rfid_uid)
         print(f"confirm_rfid_payment ok={paid.ok} status={paid.status} data={paid.data} error={paid.error}")
         return 0 if paid.ok else 1
 

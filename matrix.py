@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 
@@ -543,68 +543,6 @@ def run_interactive(display: Max7219Display) -> None:
         print(f"Code affiche pour l'identifiant {current_identifier}.")
 
 
-def _value_to_identifier(value: Any, *, field_name: str) -> int:
-    if isinstance(value, bool):
-        raise TypeError(f"{field_name} ne peut pas etre un booleen")
-
-    if isinstance(value, int):
-        return validate_identifier(value)
-
-    text = str(value).strip()
-    if not text:
-        raise ValueError(f"{field_name} est vide")
-
-    identifier_text = text.rsplit("-", 1)[-1]
-    if not identifier_text.isdecimal():
-        raise ValueError(f"{field_name} invalide pour la matrice: {value!r}")
-
-    return validate_identifier(int(identifier_text, 10))
-
-
-def basket_code_to_identifier(basket_code: str | int) -> int:
-    """
-    Convertit le code panier Kitunga en identifiant numérique 0..4095.
-
-    Exemples:
-        "KITUNGA-PI-001" -> 1
-        "KITUNGA-PI-152" -> 152
-        152 -> 152
-    """
-    return _value_to_identifier(basket_code, field_name="basket_code")
-
-
-def basket_to_identifier(basket: str | int | Mapping[str, Any]) -> int:
-    """
-    Extrait l'identifiant numerique a encoder sur la matrice.
-
-    Priorite:
-    1. basket.id renvoye par Django;
-    2. id/basket_id au niveau racine;
-    3. ancien code texte, par exemple KITUNGA-PI-001.
-    """
-    if not isinstance(basket, Mapping):
-        return basket_code_to_identifier(basket)
-
-    nested_basket = basket.get("basket")
-    if isinstance(nested_basket, Mapping):
-        for key in ("id", "basket_id", "pk"):
-            value = nested_basket.get(key)
-            if value is not None:
-                return _value_to_identifier(value, field_name=f"basket.{key}")
-
-    for key in ("id", "basket_id", "pk"):
-        value = basket.get(key)
-        if value is not None:
-            return _value_to_identifier(value, field_name=key)
-
-    for key in ("code", "device_id", "basket_code"):
-        value = basket.get(key)
-        if value is not None:
-            return basket_code_to_identifier(value)
-
-    raise ValueError("aucun identifiant panier exploitable pour la matrice")
-
-
 class MatrixDisplay:
     """
     Adaptateur Kitunga pour la matrice MAX7219.
@@ -631,8 +569,7 @@ class MatrixDisplay:
             spi_factory=spi_factory,
         )
         self.cascaded = cascaded
-        self._basket_reference: str | None = None
-        self._basket_identifier: int | None = None
+        self._current_identifier: int | None = None
         self._closed = False
         self.logger.info(
             "MAX7219 matrix ready on %s with cascaded=%s reverse_order=%s",
@@ -648,8 +585,8 @@ class MatrixDisplay:
         self.close()
 
     @property
-    def basket_identifier(self) -> int | None:
-        return self._basket_identifier
+    def current_identifier(self) -> int | None:
+        return self._current_identifier
 
     def show_identifier(self, identifier: int) -> int:
         if self._closed:
@@ -657,35 +594,9 @@ class MatrixDisplay:
 
         identifier = validate_identifier(identifier)
         self._display.show_identifier(identifier)
-        self._basket_identifier = identifier
+        self._current_identifier = identifier
         self.logger.info("Displaying matrix identifier: %s", identifier)
         return identifier
-
-    def show_basket(self, basket: str | int | Mapping[str, Any]) -> int:
-        """
-        Recoit le panier actif renvoye par le backend et affiche son id.
-
-        {"basket": {"id": 23}} -> identifiant 23 -> motif 8x8
-        KITUNGA-PI-001 -> repli legacy, identifiant 1 -> motif 8x8
-        """
-        identifier = basket_to_identifier(basket)
-
-        # Evite de réécrire la matrice si le même panier est déjà affiché.
-        if identifier == self._basket_identifier:
-            return identifier
-
-        self._basket_reference = str(basket)
-        self.show_identifier(identifier)
-
-        self.logger.info(
-            "Basket id displayed on matrix: %s -> identifier=%s",
-            basket,
-            identifier,
-        )
-        return identifier
-
-    def show_basket_code(self, basket_code: str | int) -> int:
-        return self.show_basket(basket_code)
 
     def test(self, duration: float = 0.7) -> None:
         if not self._closed:
@@ -709,8 +620,7 @@ class MatrixDisplay:
         self.show_state(message)
 
     def clear(self) -> None:
-        self._basket_reference = None
-        self._basket_identifier = None
+        self._current_identifier = None
         if not self._closed:
             self._display.clear()
 

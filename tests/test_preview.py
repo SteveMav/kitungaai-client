@@ -10,7 +10,7 @@ from preview import PreviewServer
 class PreviewServerTest(unittest.TestCase):
     def test_update_exposes_visible_yolo_detections_to_the_web_view(self) -> None:
         state = LocalDeviceState(device_id="KITUNGA-PI-001")
-        state.start_session(basket_id="basket-101", customer={"display_name": "Client"})
+        state.start_session(customer={"display_name": "Client"})
         state.mark_detection(label="Objet non repertorie : Film-Capacitor", confidence=0.58)
         preview = PreviewServer()
 

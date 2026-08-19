@@ -316,13 +316,7 @@ class HardwareController:
     def show_rfid_enrollment_pending(self) -> None:
         self.show_matrix_state("RFID_ENROLLMENT_PENDING")
 
-    def show_client_identified(self, basket_id: str | int | dict[str, Any] | None) -> None:
-        if basket_id:
-            try:
-                self.show_basket_code(str(basket_id))
-                return
-            except Exception:
-                pass
+    def show_client_identified(self) -> None:
         self.show_matrix_state("CLIENT_IDENTIFIED")
 
     def show_checkout_pending(self) -> None:
@@ -343,28 +337,6 @@ class HardwareController:
         except Exception as exc:
             logging.warning(
                 "Could not display state on Matrix: %s",
-                exc,
-            )
-
-    def show_basket_code(self, basket_code: str) -> None:
-        """
-        Affiche sur la Matrix le code du panier retourné par Django.
-        """
-
-        if self.matrix is None:
-            return
-
-        if not basket_code:
-            return
-
-        try:
-            self.matrix.show_basket_code(
-                basket_code
-            )
-
-        except Exception as exc:
-            logging.warning(
-                "Could not display basket code on Matrix: %s",
                 exc,
             )
 

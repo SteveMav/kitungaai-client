@@ -18,16 +18,16 @@ class _Api:
         self.payment_requests = []
         self.display_labels = display_labels or {}
 
-    def send_detection(self, basket_id, label, confidence, *, detection_id=None):
-        self.sent.append((basket_id, label, confidence, detection_id))
+    def send_detection(self, label, confidence, *, detection_id=None):
+        self.sent.append((label, confidence, detection_id))
         return ApiResult(
             ok=True,
             status="PRODUCT_ADDED",
             data={"display_label": self.display_labels.get(label, label)},
         )
 
-    def confirm_rfid_payment(self, basket_id, uid):
-        self.payment_requests.append((basket_id, uid))
+    def confirm_rfid_payment(self, uid):
+        self.payment_requests.append(uid)
         return ApiResult(
             ok=True,
             status="PAID",
@@ -80,7 +80,7 @@ class _Preview:
 class MultiDetectionFlowTest(unittest.TestCase):
     def test_presence_window_sends_each_object_once_then_stops_after_grace_period(self) -> None:
         state = LocalDeviceState(device_id="KITUNGA-PI-001")
-        state.start_session(basket_id="basket-1", customer={"display_name": "Client"})
+        state.start_session(customer={"display_name": "Client"})
         api = _Api()
         hardware = _Hardware()
         preview = _Preview()
@@ -145,15 +145,15 @@ class MultiDetectionFlowTest(unittest.TestCase):
             logger=logging.getLogger(__name__),
         )
 
-        self.assertEqual([entry[1] for entry in api.sent], ["ESP32", "Arduino", "ESP32"])
-        self.assertEqual(len({entry[3] for entry in api.sent}), 3)
+        self.assertEqual([entry[0] for entry in api.sent], ["ESP32", "Arduino", "ESP32"])
+        self.assertEqual(len({entry[2] for entry in api.sent}), 3)
         self.assertEqual(hardware.shown, [("ESP32", 0.95), ("Arduino", 0.95), ("ESP32", 0.95)])
         self.assertEqual(hardware.beeps, 3)
         self.assertEqual(len(preview.calls[0]["detections"]), 3)
 
     def test_backend_display_label_is_used_for_a_catalogued_model_object(self) -> None:
         state = LocalDeviceState(device_id="KITUNGA-PI-001")
-        state.start_session(basket_id="basket-1", customer={"display_name": "Client"})
+        state.start_session(customer={"display_name": "Client"})
         api = _Api({"Arduino-Mega": "Arduino Mega"})
         hardware = _Hardware()
         preview = _Preview()
@@ -190,7 +190,7 @@ class MultiDetectionFlowTest(unittest.TestCase):
 
     def test_second_rfid_read_pays_an_active_basket_before_more_detections(self) -> None:
         state = LocalDeviceState(device_id="KITUNGA-PI-001")
-        state.start_session(basket_id="basket-1", customer={"display_name": "Client"})
+        state.start_session(customer={"display_name": "Client"})
         api = _Api()
         hardware = _Hardware()
         preview = _Preview()
@@ -221,7 +221,7 @@ class MultiDetectionFlowTest(unittest.TestCase):
             logger=logging.getLogger(__name__),
         )
 
-        self.assertEqual(api.payment_requests, [("basket-1", "04A732B19C")])
+        self.assertEqual(api.payment_requests, ["04A732B19C"])
         self.assertEqual(state.session_status, SessionStatus.PAYMENT_SUCCESS)
         self.assertEqual(state.reset_command_id, "reset-command")
         self.assertEqual(hardware.payment_successes, 1)
