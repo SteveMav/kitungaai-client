@@ -12,8 +12,6 @@ class MockApiClientTest(unittest.TestCase):
         client = MockApiClient(
             known_rfid_uid="04A732B19C",
             basket_id="KITUNGA-0042",
-            checkout_after_detections=1,
-            checkout_after_seconds=0,
         )
 
         started = client.start_session("04A732B19C")
@@ -28,7 +26,7 @@ class MockApiClientTest(unittest.TestCase):
 
         status = client.get_basket_status("KITUNGA-0042")
         self.assertTrue(status.ok)
-        self.assertEqual(status.status, "CHECKOUT_PENDING")
+        self.assertEqual(status.status, "ACTIVE")
 
         paid = client.confirm_rfid_payment("KITUNGA-0042", "04A732B19C")
         self.assertTrue(paid.ok)
@@ -38,8 +36,6 @@ class MockApiClientTest(unittest.TestCase):
         client = MockApiClient(
             known_rfid_uid="04A732B19C",
             basket_id="KITUNGA-0042",
-            checkout_after_detections=2,
-            checkout_after_seconds=0,
         )
 
         started = client.start_session("04A732B19C")
@@ -61,16 +57,14 @@ class MockApiClientTest(unittest.TestCase):
 
         status = client.get_basket_status("KITUNGA-0042")
         self.assertTrue(status.ok)
-        self.assertEqual(status.status, "CHECKOUT_PENDING")
+        self.assertEqual(status.status, "ACTIVE")
 
         client.reset_session("KITUNGA-0042")
         self.assertEqual(client.get_mock_basket("KITUNGA-0042"), {})
 
-    def test_mock_accepts_all_objects_seen_in_one_camera_cycle_before_checkout(self) -> None:
+    def test_mock_accepts_all_objects_seen_in_one_camera_cycle_before_rfid_payment(self) -> None:
         client = MockApiClient(
             known_rfid_uid="04A732B19C",
-            checkout_after_detections=2,
-            checkout_after_seconds=0,
         )
         client.start_session("04A732B19C")
 
@@ -79,7 +73,8 @@ class MockApiClientTest(unittest.TestCase):
             self.assertTrue(result.ok)
 
         self.assertEqual(client.get_mock_basket("KITUNGA-0042"), {"ESP32": 2, "Arduino": 1})
-        self.assertEqual(client.get_basket_status("KITUNGA-0042").status, "CHECKOUT_PENDING")
+        self.assertEqual(client.get_basket_status("KITUNGA-0042").status, "ACTIVE")
+        self.assertTrue(client.confirm_rfid_payment("KITUNGA-0042", "04A732B19C").ok)
 
 
 class _InvalidJsonResponse:

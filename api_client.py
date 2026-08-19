@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -14,8 +13,6 @@ from config import (
     DEVICE_ID,
     DEVICE_SECRET,
     MOCK_BASKET_ID,
-    MOCK_CHECKOUT_AFTER_DETECTIONS,
-    MOCK_CHECKOUT_AFTER_SECONDS,
     MOCK_CUSTOMER_ID,
     MOCK_CUSTOMER_NAME,
     REQUEST_TIMEOUT,
@@ -69,8 +66,6 @@ class MockApiClient:
         customer_name: str = MOCK_CUSTOMER_NAME,
         customer_id: str = MOCK_CUSTOMER_ID,
         basket_id: str = MOCK_BASKET_ID,
-        checkout_after_detections: int = MOCK_CHECKOUT_AFTER_DETECTIONS,
-        checkout_after_seconds: float = MOCK_CHECKOUT_AFTER_SECONDS,
     ) -> None:
         self.device_id = device_id
         self.known_rfid_uid = _normalize_uid(known_rfid_uid)
@@ -80,8 +75,6 @@ class MockApiClient:
             "display_name": customer_name,
         }
         self.default_basket_id = basket_id
-        self.checkout_after_detections = max(0, checkout_after_detections)
-        self.checkout_after_seconds = max(0.0, checkout_after_seconds)
         self._sessions: dict[str, dict[str, Any]] = {}
 
     def start_session(self, rfid_uid: str) -> ApiResult:
@@ -99,7 +92,6 @@ class MockApiClient:
             "status": "ACTIVE",
             "detections": [],
             "items": {},
-            "started_at": time.monotonic(),
             "rfid_uid": normalized_uid,
         }
         self._sessions[self.default_basket_id] = session
@@ -142,7 +134,6 @@ class MockApiClient:
             "label": label,
             "confidence": round(float(confidence), 4),
             "accepted": True,
-            "created_at_monotonic": time.monotonic(),
         }
         session["detections"].append(detection)
         items = session.setdefault("items", {})
@@ -170,7 +161,6 @@ class MockApiClient:
                 error=f"Mock basket not found: {basket_id}",
             )
 
-        self._maybe_move_to_checkout(session)
         return ApiResult(
             ok=True,
             status=session["status"],
@@ -196,11 +186,11 @@ class MockApiClient:
                 status="RFID_MISMATCH",
                 error="Payment RFID does not match the active customer",
             )
-        if session["status"] != "CHECKOUT_PENDING":
+        if session["status"] not in {"ACTIVE", "CHECKOUT_PENDING"}:
             return ApiResult(
                 ok=False,
                 status=session["status"],
-                error="Mock payment requires CHECKOUT_PENDING status",
+                error="Mock basket is no longer available for payment",
             )
 
         session["status"] = "PAID"
@@ -230,22 +220,6 @@ class MockApiClient:
             self._sessions.clear()
             return
         self._sessions.pop(basket_id, None)
-
-    def _maybe_move_to_checkout(self, session: dict[str, Any]) -> None:
-        if session["status"] != "ACTIVE":
-            return
-
-        detection_limit_reached = (
-            self.checkout_after_detections > 0
-            and len(session["detections"]) >= self.checkout_after_detections
-        )
-        time_limit_reached = (
-            self.checkout_after_seconds > 0
-            and time.monotonic() - session["started_at"] >= self.checkout_after_seconds
-        )
-        if detection_limit_reached or time_limit_reached:
-            session["status"] = "CHECKOUT_PENDING"
-
 
 def _mock_items_payload(session: dict[str, Any]) -> list[dict[str, Any]]:
     items = session.get("items") or {}
