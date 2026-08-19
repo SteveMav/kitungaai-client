@@ -100,12 +100,20 @@ Avec image fixe :
 python main.py --api-mode mock --rfid-mode simulation --test-image captures/live_KITUNGA-PI-001.jpg
 ```
 
-La preview Flask est active par defaut sur :
+La vue web Flask est activee par defaut et ecoute tout le reseau local :
 
 ```text
 http://IP_RASPBERRY:5000
 http://IP_RASPBERRY:5000/status.json
 ```
+
+Pour la consulter depuis un telephone ou un PC connecte au meme Wi-Fi, lancez
+le client normalement (sans `--no-preview`), puis recuperez l'adresse de la
+Raspberry avec `hostname -I`. Ouvrez par exemple `http://192.168.1.42:5000`.
+La page affiche le flux camera, les cadres YOLO, les detections visibles et le
+dernier objet transmis au backend. Si le port est inaccessible, verifiez que
+les appareils ne sont pas sur un Wi-Fi invite/isole et, si UFW est active sur
+la Pi, autorisez le port TCP 5000.
 
 ## Passage au backend reel
 
@@ -197,6 +205,7 @@ MATRIX_DEVICE=/dev/spidev0.0
 MATRIX_CASCADED=4
 MATRIX_INTENSITY=2
 PREVIEW_ENABLED=true
+PREVIEW_HOST=0.0.0.0
 PREVIEW_PORT=5000
 LOG_FILE=/home/admin/mon_oled/kitunga_pi_client/logs/kitunga_pi_client.log
 ```
