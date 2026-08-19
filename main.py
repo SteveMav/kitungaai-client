@@ -37,6 +37,7 @@ from config import (
     MODEL_PATH,
     PIR_ACTIVE_HIGH,
     PIR_PIN,
+    PRESENCE_GRACE_SECONDS,
     PREVIEW_ENABLED,
     PREVIEW_HOST,
     PREVIEW_PORT,
@@ -52,6 +53,7 @@ from deduplication import ProductDeduplicator
 from detector import DetectionResult, YoloObjectDetector
 from hardware import HardwareConfig, HardwareController
 from iot_state import LocalDeviceState, SessionStatus
+from presence import PresenceDetectionWindow
 from preview import PreviewServer
 from rfid import build_rfid_reader
 
@@ -89,6 +91,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stability-frames", type=int, default=DETECTION_STABILITY_FRAMES)
     parser.add_argument("--cooldown", type=float, default=COOLDOWN_SECONDS)
     parser.add_argument("--disappear-frames", type=int, default=DETECTION_DISAPPEAR_FRAMES)
+    parser.add_argument(
+        "--presence-grace-seconds",
+        type=float,
+        default=PRESENCE_GRACE_SECONDS,
+    )
     parser.add_argument(
         "--track-iou-threshold",
         type=float,
@@ -168,6 +175,9 @@ def main() -> None:
         disappear_frames=args.disappear_frames,
         track_iou_threshold=args.track_iou_threshold,
     )
+    presence_window = PresenceDetectionWindow(
+        grace_seconds=args.presence_grace_seconds,
+    )
 
     hardware = build_hardware()
     preview = PreviewServer()
@@ -225,6 +235,7 @@ def main() -> None:
                         hardware=hardware,
                         preview=preview,
                         deduplicator=deduplicator,
+                        presence_window=presence_window,
                         last_status_poll=last_status_poll,
                         logger=logger,
                     )
@@ -256,6 +267,7 @@ def main() -> None:
                     _reset_mock_api_session(api, basket_id)
                     state.reset_session()
                     deduplicator.reset()
+                    presence_window.reset()
                     hardware.show_waiting()
                     preview.update(frame=None, detection=None, state=state)
                     if args.once:
@@ -418,15 +430,23 @@ def _handle_active_session(
     hardware: HardwareController,
     preview: PreviewServer,
     deduplicator: ProductDeduplicator,
+    presence_window: PresenceDetectionWindow,
     last_status_poll: float,
     logger: logging.Logger,
 ) -> float:
     presence = hardware.presence_detected()
     hardware.apply_presence(presence)
+    detection_active = presence_window.observe(presence)
 
-    if presence:
+    if detection_active:
         detections, frame = _read_detection(args, detector, camera)
-        preview.update(frame=frame, detections=detections, state=state, presence_detected=presence)
+        preview.update(
+            frame=frame,
+            detections=detections,
+            state=state,
+            presence_detected=presence,
+            detection_active=detection_active,
+        )
         candidates = deduplicator.observe(detections)
         for candidate in candidates:
             _send_product_candidate(
@@ -441,7 +461,13 @@ def _handle_active_session(
                 logger=logger,
             )
     else:
-        preview.update(frame=None, detections=None, state=state, presence_detected=presence)
+        preview.update(
+            frame=None,
+            detections=None,
+            state=state,
+            presence_detected=presence,
+            detection_active=detection_active,
+        )
 
     now = time.monotonic()
     if now - last_status_poll >= args.basket_poll_interval:
@@ -574,9 +600,10 @@ def _send_product_candidate(
 
     deduplicator.mark_accepted(track_id)
     _sync_mock_items(state, result)
-    state.mark_detection(label=label, confidence=confidence)
-    logger.info("Product accepted by API/mock: %s %.2f", label, confidence)
-    hardware.show_detection(label, confidence)
+    display_label = str(result.data.get("display_label") or label)
+    state.mark_detection(label=display_label, confidence=confidence)
+    logger.info("Product accepted by API/mock: %s → %s %.2f", label, display_label, confidence)
+    hardware.show_detection(display_label, confidence)
     hardware.beep_detection()
 
 

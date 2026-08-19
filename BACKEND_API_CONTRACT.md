@@ -92,21 +92,32 @@ Response 200/201 :
 {
   "status": "PRODUCT_ADDED",
   "basket_id": "KITUNGA-0042",
-  "label": "ESP32",
+  "label": "ESP32-CAM",
+  "display_label": "Esp32 Cam",
+  "catalogued": true,
   "accepted": true
 }
 ```
 
-Erreurs attendues :
+Si le label YOLO ne correspond pas encore à un produit, le backend l'ajoute au
+panier comme objet non répertorié, sans prix ni décrément de stock :
 
 ```json
 {
-  "status": "UNKNOWN_PRODUCT",
-  "message": "No product matches this YOLO label"
+  "status": "UNCATALOGUED_OBJECT_ADDED",
+  "basket_id": "KITUNGA-0042",
+  "label": "buzzer",
+  "display_label": "Objet non répertorié : buzzer",
+  "catalogued": false,
+  "accepted": true
 }
 ```
 
-Codes possibles : `400`, `404`, `409`, `422`, `500`.
+Le client doit afficher `display_label` lorsqu'il est présent. Une caisse ne
+peut pas finaliser la vente tant que ces objets non répertoriés n'ont pas été
+retirés ou associés au catalogue par un opérateur.
+
+Codes possibles : `201`, `200` (rejeu idempotent), `400`, `409`, `422`, `500`.
 
 ## 3. GET BASKET STATUS
 

@@ -65,10 +65,13 @@ class PreviewServer:
         detection: DetectionResult | None = None,
         detections: Iterable[DetectionResult] | None = None,
         presence_detected: bool | None = None,
+        detection_active: bool | None = None,
     ) -> None:
         status = state.preview_payload()
         if presence_detected is not None:
             status["presence_detected"] = presence_detected
+        if detection_active is not None:
+            status["detection_active"] = detection_active
         visible_detections = (
             tuple(detections)
             if detections is not None
@@ -152,6 +155,7 @@ def _draw_status(frame: np.ndarray, status: dict[str, Any]) -> None:
         f"client: {status.get('customer') or '-'}",
         f"basket: {status.get('basket_id') or '-'}",
         f"session: {status.get('session_status') or '-'}",
+        f"vision: {'ON' if status.get('detection_active') else 'OFF'}",
         f"backend: {'OK' if status.get('backend_available', True) else 'DOWN'}",
     ]
     if status.get("last_label"):
