@@ -1,21 +1,31 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterable
 
 from detector import DetectionResult
 
 
 @dataclass(frozen=True)
 class StableDetection:
+    track_id: str
     label: str
     confidence: float
+    bbox_xyxy: tuple[int, int, int, int] | None
 
 
 @dataclass
-class _LockState:
+class _TrackedDetection:
+    track_id: str
+    label: str
+    bbox_xyxy: tuple[int, int, int, int] | None
+    confidence: float
+    stable_frames: int
     missing_frames: int = 0
+    accepted: bool = False
+    last_attempt_at: float | None = None
 
 
 class ProductDeduplicator:
@@ -26,79 +36,139 @@ class ProductDeduplicator:
         stability_frames: int,
         cooldown_seconds: float,
         disappear_frames: int,
+        track_iou_threshold: float = 0.30,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.confidence_threshold = confidence_threshold
         self.stability_frames = max(1, stability_frames)
         self.cooldown_seconds = max(0.0, cooldown_seconds)
         self.disappear_frames = max(1, disappear_frames)
+        self.track_iou_threshold = min(1.0, max(0.0, track_iou_threshold))
         self._monotonic = monotonic
-        self._candidate_label: str | None = None
-        self._candidate_count = 0
-        self._locked_labels: dict[str, _LockState] = {}
-        self._last_attempt_at: dict[str, float] = {}
-        self._last_accepted_at: dict[str, float] = {}
+        self._tracks: dict[str, _TrackedDetection] = {}
 
-    def observe(self, result: DetectionResult) -> StableDetection | None:
-        visible_label = self._visible_label(result)
-        self._update_locks(visible_label)
+    def observe(self, results: Iterable[DetectionResult]) -> tuple[StableDetection, ...]:
+        """Return every independently stable object visible in the current frame.
 
-        if visible_label is None:
-            self._candidate_label = None
-            self._candidate_count = 0
-            return None
+        An accepted object remains locked to its physical track until it has
+        disappeared for ``disappear_frames``. This allows two objects carrying
+        the same label to be added once each without re-adding them on every
+        camera frame.
+        """
+        visible = tuple(result for result in results if result.found and result.label)
+        assignments = self._match_tracks(visible)
+        matched_track_ids = set(assignments.values())
+        now = self._monotonic()
 
-        if visible_label in self._locked_labels:
-            return None
+        for detection_index, track_id in assignments.items():
+            self._update_track(self._tracks[track_id], visible[detection_index])
 
-        if visible_label != self._candidate_label:
-            self._candidate_label = visible_label
-            self._candidate_count = 1
-        else:
-            self._candidate_count += 1
+        for detection_index, detection in enumerate(visible):
+            if detection_index not in assignments:
+                track = _TrackedDetection(
+                    track_id=str(uuid.uuid4()),
+                    label=detection.label or "unknown",
+                    bbox_xyxy=detection.bbox_xyxy,
+                    confidence=detection.confidence,
+                    stable_frames=1 if self._is_confident(detection) else 0,
+                )
+                self._tracks[track.track_id] = track
+                matched_track_ids.add(track.track_id)
 
-        if self._candidate_count < self.stability_frames:
-            return None
+        for track_id, track in list(self._tracks.items()):
+            if track_id in matched_track_ids:
+                continue
+            track.missing_frames += 1
+            track.stable_frames = 0
+            if track.missing_frames >= self.disappear_frames:
+                del self._tracks[track_id]
 
-        if self._cooldown_active(visible_label):
-            return None
+        candidates = []
+        for track in self._tracks.values():
+            if track.track_id not in matched_track_ids:
+                continue
+            if track.accepted or track.stable_frames < self.stability_frames:
+                continue
+            if self._cooldown_active(track, now):
+                continue
+            track.last_attempt_at = now
+            candidates.append(
+                StableDetection(
+                    track_id=track.track_id,
+                    label=track.label,
+                    confidence=track.confidence,
+                    bbox_xyxy=track.bbox_xyxy,
+                )
+            )
+        return tuple(candidates)
 
-        self._last_attempt_at[visible_label] = self._monotonic()
-        return StableDetection(label=visible_label, confidence=result.confidence)
-
-    def mark_accepted(self, label: str) -> None:
-        self._locked_labels[label] = _LockState(missing_frames=0)
-        self._last_accepted_at[label] = self._monotonic()
+    def mark_accepted(self, track_id: str) -> None:
+        track = self._tracks.get(track_id)
+        if track is not None:
+            track.accepted = True
 
     def reset(self) -> None:
-        self._candidate_label = None
-        self._candidate_count = 0
-        self._locked_labels.clear()
-        self._last_attempt_at.clear()
-        self._last_accepted_at.clear()
+        self._tracks.clear()
 
-    def _visible_label(self, result: DetectionResult) -> str | None:
-        if not result.found or result.label is None:
-            return None
-        if result.confidence < self.confidence_threshold:
-            return None
-        return result.label
+    def _match_tracks(self, visible: tuple[DetectionResult, ...]) -> dict[int, str]:
+        possible_matches = []
+        for detection_index, detection in enumerate(visible):
+            for track in self._tracks.values():
+                if detection.label != track.label:
+                    continue
+                overlap = _bbox_iou(detection.bbox_xyxy, track.bbox_xyxy)
+                if overlap is None:
+                    # Bounding boxes are always available with YOLO. This
+                    # fallback preserves one-object behavior for simulations.
+                    overlap = 1.0
+                if overlap >= self.track_iou_threshold:
+                    possible_matches.append((overlap, detection_index, track.track_id))
 
-    def _update_locks(self, visible_label: str | None) -> None:
-        for label in list(self._locked_labels):
-            lock = self._locked_labels[label]
-            if label == visible_label:
-                lock.missing_frames = 0
+        assignments: dict[int, str] = {}
+        matched_tracks: set[str] = set()
+        for _overlap, detection_index, track_id in sorted(possible_matches, reverse=True):
+            if detection_index in assignments or track_id in matched_tracks:
                 continue
+            assignments[detection_index] = track_id
+            matched_tracks.add(track_id)
+        return assignments
 
-            lock.missing_frames += 1
-            if lock.missing_frames >= self.disappear_frames:
-                del self._locked_labels[label]
+    def _update_track(self, track: _TrackedDetection, detection: DetectionResult) -> None:
+        was_missing = track.missing_frames > 0
+        track.bbox_xyxy = detection.bbox_xyxy
+        track.confidence = detection.confidence
+        track.missing_frames = 0
+        if self._is_confident(detection):
+            track.stable_frames = 1 if was_missing else track.stable_frames + 1
+        else:
+            track.stable_frames = 0
 
-    def _cooldown_active(self, label: str) -> bool:
-        last_time = self._last_accepted_at.get(label)
-        if last_time is None:
-            last_time = self._last_attempt_at.get(label)
-        if last_time is None:
-            return False
-        return self._monotonic() - last_time < self.cooldown_seconds
+    def _is_confident(self, detection: DetectionResult) -> bool:
+        return detection.confidence >= self.confidence_threshold
+
+    def _cooldown_active(self, track: _TrackedDetection, now: float) -> bool:
+        return (
+            track.last_attempt_at is not None
+            and now - track.last_attempt_at < self.cooldown_seconds
+        )
+
+
+def _bbox_iou(
+    first: tuple[int, int, int, int] | None,
+    second: tuple[int, int, int, int] | None,
+) -> float | None:
+    if first is None or second is None:
+        return None
+
+    left = max(first[0], second[0])
+    top = max(first[1], second[1])
+    right = min(first[2], second[2])
+    bottom = min(first[3], second[3])
+    intersection = max(0, right - left) * max(0, bottom - top)
+    if intersection == 0:
+        return 0.0
+
+    first_area = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+    second_area = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+    union = first_area + second_area - intersection
+    return intersection / union if union else 0.0

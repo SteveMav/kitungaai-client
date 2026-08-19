@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Iterable
 from typing import Any
 
 import cv2
@@ -60,18 +61,25 @@ class PreviewServer:
         self,
         *,
         frame: np.ndarray | None,
-        detection: DetectionResult | None,
         state: LocalDeviceState,
+        detection: DetectionResult | None = None,
+        detections: Iterable[DetectionResult] | None = None,
         presence_detected: bool | None = None,
     ) -> None:
         status = state.preview_payload()
         if presence_detected is not None:
             status["presence_detected"] = presence_detected
+        visible_detections = (
+            tuple(detections)
+            if detections is not None
+            else (() if detection is None else (detection,))
+        )
+        status["visible_detections"] = len(visible_detections)
 
         annotated = None
         if frame is not None:
             annotated = frame.copy()
-            _draw_detection(annotated, detection)
+            _draw_detections(annotated, visible_detections)
             _draw_status(annotated, status)
 
         with self._lock:
@@ -113,28 +121,29 @@ def _placeholder(status: dict[str, Any]) -> np.ndarray:
     return image
 
 
-def _draw_detection(frame: np.ndarray, detection: DetectionResult | None) -> None:
-    if detection is None or not detection.found:
-        return
+def _draw_detections(frame: np.ndarray, detections: Iterable[DetectionResult]) -> None:
+    for index, detection in enumerate(detections):
+        if not detection.found:
+            continue
 
-    label = detection.label or "unknown"
-    confidence = detection.confidence
-    if detection.bbox_xyxy is not None:
-        x1, y1, x2, y2 = detection.bbox_xyxy
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 204), 2)
-        text_origin = (max(0, x1), max(20, y1 - 8))
-    else:
-        text_origin = (16, 70)
+        label = detection.label or "unknown"
+        confidence = detection.confidence
+        if detection.bbox_xyxy is not None:
+            x1, y1, x2, y2 = detection.bbox_xyxy
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 204), 2)
+            text_origin = (max(0, x1), max(20, y1 - 8))
+        else:
+            text_origin = (16, 70 + index * 28)
 
-    cv2.putText(
-        frame,
-        f"{label} {confidence:.2f}",
-        text_origin,
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (0, 255, 204),
-        2,
-    )
+        cv2.putText(
+            frame,
+            f"{label} {confidence:.2f}",
+            text_origin,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 204),
+            2,
+        )
 
 
 def _draw_status(frame: np.ndarray, status: dict[str, Any]) -> None:

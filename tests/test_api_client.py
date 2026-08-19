@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+import requests
+
 from api_client import MockApiClient, RealApiClient
 
 
@@ -64,6 +66,21 @@ class MockApiClientTest(unittest.TestCase):
         client.reset_session("KITUNGA-0042")
         self.assertEqual(client.get_mock_basket("KITUNGA-0042"), {})
 
+    def test_mock_accepts_all_objects_seen_in_one_camera_cycle_before_checkout(self) -> None:
+        client = MockApiClient(
+            known_rfid_uid="04A732B19C",
+            checkout_after_detections=2,
+            checkout_after_seconds=0,
+        )
+        client.start_session("04A732B19C")
+
+        for label in ("ESP32", "Arduino", "ESP32"):
+            result = client.send_detection("KITUNGA-0042", label, 0.95)
+            self.assertTrue(result.ok)
+
+        self.assertEqual(client.get_mock_basket("KITUNGA-0042"), {"ESP32": 2, "Arduino": 1})
+        self.assertEqual(client.get_basket_status("KITUNGA-0042").status, "CHECKOUT_PENDING")
+
 
 class _InvalidJsonResponse:
     status_code = 200
@@ -107,6 +124,15 @@ class _FakeSession:
         return self.response
 
 
+class _ConnectionErrorSession:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def request(self, *_args, **_kwargs):
+        self.calls.append(_kwargs)
+        raise requests.ConnectionError("offline")
+
+
 class RealApiClientTest(unittest.TestCase):
     def test_invalid_json_is_reported(self) -> None:
         client = RealApiClient(
@@ -142,6 +168,22 @@ class RealApiClientTest(unittest.TestCase):
         self.assertEqual(headers["Authorization"], "Device device-secret")
         self.assertEqual(headers["X-Device-Code"], "KITUNGA-PI-001")
         self.assertIn("Idempotency-Key", headers)
+
+    def test_each_tracked_object_has_its_own_retry_key(self) -> None:
+        session = _ConnectionErrorSession()
+        client = RealApiClient(
+            base_url="http://backend",
+            device_secret="device-secret",
+            session=session,
+        )
+
+        client.send_detection("basket-1", "ESP32", 0.95, detection_id="track-a")
+        client.send_detection("basket-1", "ESP32", 0.95, detection_id="track-a")
+        client.send_detection("basket-1", "ESP32", 0.95, detection_id="track-b")
+
+        keys = [call["headers"]["Idempotency-Key"] for call in session.calls]
+        self.assertEqual(keys[0], keys[1])
+        self.assertNotEqual(keys[0], keys[2])
 
     def test_missing_device_secret_fails_before_network_request(self) -> None:
         session = _FakeSession(_HttpErrorResponse())

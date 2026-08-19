@@ -46,6 +46,7 @@ from config import (
     SIMULATED_RFID_INTERVAL_SECONDS,
     SIMULATED_RFID_UID,
     TEST_IMAGE_PATH,
+    TRACK_IOU_THRESHOLD,
 )
 from deduplication import ProductDeduplicator
 from detector import DetectionResult, YoloObjectDetector
@@ -78,12 +79,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--capture-height", type=int, default=CAPTURE_HEIGHT)
     parser.add_argument("--model-path", default=str(MODEL_PATH))
     parser.add_argument("--test-image", default=TEST_IMAGE_PATH)
-    parser.add_argument("--simulate-detection", default="")
+    parser.add_argument(
+        "--simulate-detection",
+        default="",
+        help="Comma-separated labels to simulate, for example ESP32,Arduino",
+    )
     parser.add_argument("--simulate-confidence", type=float, default=0.95)
     parser.add_argument("--threshold", type=float, default=CONFIDENCE_THRESHOLD)
     parser.add_argument("--stability-frames", type=int, default=DETECTION_STABILITY_FRAMES)
     parser.add_argument("--cooldown", type=float, default=COOLDOWN_SECONDS)
     parser.add_argument("--disappear-frames", type=int, default=DETECTION_DISAPPEAR_FRAMES)
+    parser.add_argument(
+        "--track-iou-threshold",
+        type=float,
+        default=TRACK_IOU_THRESHOLD,
+    )
     parser.add_argument("--interval", type=float, default=SCAN_INTERVAL_SECONDS)
     parser.add_argument("--basket-poll-interval", type=float, default=BASKET_STATUS_POLL_SECONDS)
     parser.add_argument("--once", action="store_true", help="Stop after one paid mock/real session")
@@ -156,6 +166,7 @@ def main() -> None:
         stability_frames=args.stability_frames,
         cooldown_seconds=args.cooldown,
         disappear_frames=args.disappear_frames,
+        track_iou_threshold=args.track_iou_threshold,
     )
 
     hardware = build_hardware()
@@ -414,22 +425,23 @@ def _handle_active_session(
     hardware.apply_presence(presence)
 
     if presence:
-        detection, frame = _read_detection(args, detector, camera)
-        preview.update(frame=frame, detection=detection, state=state, presence_detected=presence)
-        candidate = deduplicator.observe(detection)
-        if candidate is not None:
+        detections, frame = _read_detection(args, detector, camera)
+        preview.update(frame=frame, detections=detections, state=state, presence_detected=presence)
+        candidates = deduplicator.observe(detections)
+        for candidate in candidates:
             _send_product_candidate(
                 api=api,
                 args=args,
                 state=state,
                 hardware=hardware,
                 deduplicator=deduplicator,
+                track_id=candidate.track_id,
                 label=candidate.label,
                 confidence=candidate.confidence,
                 logger=logger,
             )
     else:
-        preview.update(frame=None, detection=None, state=state, presence_detected=presence)
+        preview.update(frame=None, detections=None, state=state, presence_detected=presence)
 
     now = time.monotonic()
     if now - last_status_poll >= args.basket_poll_interval:
@@ -481,18 +493,28 @@ def _read_detection(
     args: argparse.Namespace,
     detector: YoloObjectDetector | None,
     camera: CameraManager | None,
-) -> tuple[DetectionResult, np.ndarray | None]:
+) -> tuple[tuple[DetectionResult, ...], np.ndarray | None]:
     if args.simulate_detection:
         frame = np.zeros((480, 640, 3), np.uint8) + 45
-        cv2.rectangle(frame, (150, 110), (480, 360), (0, 255, 204), 2)
-        return (
-            DetectionResult(
-                label=args.simulate_detection,
-                confidence=args.simulate_confidence,
-                bbox_xyxy=(150, 110, 480, 360),
-            ),
-            frame,
+        labels = tuple(
+            label.strip()
+            for label in args.simulate_detection.split(",")
+            if label.strip()
         )
+        detections = []
+        for index, label in enumerate(labels):
+            column, row = index % 3, index // 3
+            x1, y1 = 40 + column * 200, 80 + row * 170
+            bbox = (x1, y1, x1 + 150, y1 + 120)
+            cv2.rectangle(frame, bbox[:2], bbox[2:], (0, 255, 204), 2)
+            detections.append(
+                DetectionResult(
+                    label=label,
+                    confidence=args.simulate_confidence,
+                    bbox_xyxy=bbox,
+                )
+            )
+        return tuple(detections), frame
 
     if detector is None:
         raise RuntimeError("Detector is not initialized.")
@@ -523,6 +545,7 @@ def _send_product_candidate(
     state: LocalDeviceState,
     hardware: HardwareController,
     deduplicator: ProductDeduplicator,
+    track_id: str,
     label: str,
     confidence: float,
     logger: logging.Logger,
@@ -531,12 +554,17 @@ def _send_product_candidate(
         logger.warning("Detection ignored because no active basket_id is available.")
         return
 
-    logger.info("Stable product candidate: label=%s confidence=%.2f", label, confidence)
+    logger.info(
+        "Stable product candidate: track=%s label=%s confidence=%.2f",
+        track_id,
+        label,
+        confidence,
+    )
     if args.no_send:
         logger.info("No-send mode enabled; product not sent to API.")
         return
 
-    result = api.send_detection(state.basket_id, label, confidence)
+    result = api.send_detection(state.basket_id, label, confidence, detection_id=track_id)
     state.mark_api_result(ok=result.ok, error=result.error)
     if not result.ok:
         logger.warning("Product send failed: %s", _api_error_message(result))
@@ -544,7 +572,7 @@ def _send_product_candidate(
         hardware.beep_error()
         return
 
-    deduplicator.mark_accepted(label)
+    deduplicator.mark_accepted(track_id)
     _sync_mock_items(state, result)
     state.mark_detection(label=label, confidence=confidence)
     logger.info("Product accepted by API/mock: %s %.2f", label, confidence)

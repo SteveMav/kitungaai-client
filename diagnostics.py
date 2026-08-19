@@ -295,15 +295,17 @@ class _Commands:
             raise RuntimeError("Provide --test-image for YOLO diagnostics.")
 
         detector = YoloObjectDetector(args.model_path or MODEL_PATH)
-        result = detector.detect(Path(args.test_image))
-        print(
-            "found={found} label={label} confidence={confidence:.4f} bbox={bbox}".format(
-                found=result.found,
-                label=result.label,
-                confidence=result.confidence,
-                bbox=result.bbox_xyxy,
+        detections = detector.detect(Path(args.test_image))
+        print(f"detections={len(detections)}")
+        for index, detection in enumerate(detections, start=1):
+            print(
+                "#{index} label={label} confidence={confidence:.4f} bbox={bbox}".format(
+                    index=index,
+                    label=detection.label,
+                    confidence=detection.confidence,
+                    bbox=detection.bbox_xyxy,
+                )
             )
-        )
         return 0
 
     @staticmethod

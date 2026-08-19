@@ -32,37 +32,43 @@ class YoloObjectDetector:
 
         self.model = YOLO(str(self.model_path))
 
-    def detect(self, image_path: str | Path) -> DetectionResult:
+    def detect(self, image_path: str | Path) -> tuple[DetectionResult, ...]:
         image_path = Path(image_path)
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
 
         return self._detect_source(str(image_path))
 
-    def detect_frame(self, frame) -> DetectionResult:
+    def detect_frame(self, frame) -> tuple[DetectionResult, ...]:
         return self._detect_source(frame)
 
-    def _detect_source(self, source) -> DetectionResult:
+    def _detect_source(self, source) -> tuple[DetectionResult, ...]:
         results = self.model(source, verbose=False)
         if not results:
-            return DetectionResult(label=None, confidence=0.0)
+            return ()
 
         result = results[0]
         boxes = result.boxes
         if boxes is None or len(boxes) == 0:
-            return DetectionResult(label=None, confidence=0.0)
+            return ()
 
-        confidences = boxes.conf
-        best_index = int(confidences.argmax().item())
-        confidence = float(confidences[best_index].item())
-        class_id = int(boxes.cls[best_index].item())
-        label = _label_from_class_id(result.names, class_id)
-        bbox = None
-        if getattr(boxes, "xyxy", None) is not None:
-            coordinates = boxes.xyxy[best_index].tolist()
-            bbox = tuple(int(round(value)) for value in coordinates[:4])
+        detections = []
+        for index in range(len(boxes)):
+            confidence = float(boxes.conf[index].item())
+            class_id = int(boxes.cls[index].item())
+            bbox = None
+            if getattr(boxes, "xyxy", None) is not None:
+                coordinates = boxes.xyxy[index].tolist()
+                bbox = tuple(int(round(value)) for value in coordinates[:4])
+            detections.append(
+                DetectionResult(
+                    label=_label_from_class_id(result.names, class_id),
+                    confidence=confidence,
+                    bbox_xyxy=bbox,
+                )
+            )
 
-        return DetectionResult(label=label, confidence=confidence, bbox_xyxy=bbox)
+        return tuple(detections)
 
 
 def _label_from_class_id(names, class_id: int) -> str:
@@ -74,7 +80,7 @@ def _label_from_class_id(names, class_id: int) -> str:
 _default_detector: YoloObjectDetector | None = None
 
 
-def detect(image_path: str | Path) -> DetectionResult:
+def detect(image_path: str | Path) -> tuple[DetectionResult, ...]:
     global _default_detector
     if _default_detector is None:
         _default_detector = YoloObjectDetector()
