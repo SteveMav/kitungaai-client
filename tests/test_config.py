@@ -5,10 +5,31 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from config import load_local_env
+from config import DEFAULT_API_BASE_URL, env_value, load_local_env
 
 
 class LocalEnvConfigTest(unittest.TestCase):
+    def test_backend_hostname_default_is_mdns_address(self) -> None:
+        previous = {
+            name: os.environ.get(name)
+            for name in ("API_BASE_URL", "KITUNGA_API_BASE_URL")
+        }
+        try:
+            os.environ.pop("API_BASE_URL", None)
+            os.environ.pop("KITUNGA_API_BASE_URL", None)
+
+            self.assertEqual(DEFAULT_API_BASE_URL, "http://stevemavuela.local:8000")
+            self.assertEqual(
+                env_value("API_BASE_URL", DEFAULT_API_BASE_URL, "KITUNGA_API_BASE_URL"),
+                DEFAULT_API_BASE_URL,
+            )
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
     def test_loads_valid_values_without_overriding_exported_variables(self) -> None:
         previous = {name: os.environ.get(name) for name in ("KITUNGA_TEST_VALUE", "KITUNGA_TEST_FIXED")}
         try:

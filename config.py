@@ -56,9 +56,10 @@ def env_float(name: str, default: float, *aliases: str) -> float:
 
 # API
 API_MODE = env_value("API_MODE", "mock", "KITUNGA_API_MODE").strip().lower()
+DEFAULT_API_BASE_URL = "http://stevemavuela.local:8000"
 API_BASE_URL = env_value(
     "API_BASE_URL",
-    "http://STEVEMAVUELA:8000",
+    DEFAULT_API_BASE_URL,
     "KITUNGA_API_BASE_URL",
 )
 DEVICE_ID = env_value("DEVICE_ID", "KITUNGA-PI-001", "KITUNGA_DEVICE_ID")

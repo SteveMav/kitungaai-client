@@ -5,7 +5,7 @@ Routes proposees pour `RealApiClient`. Les noms peuvent changer, mais seules les
 Base URL :
 
 ```text
-API_BASE_URL=http://IP_BACKEND:8000
+API_BASE_URL=http://stevemavuela.local:8000
 ```
 
 Headers :
@@ -197,4 +197,4 @@ Codes possibles : `400`, `402`, `403`, `404`, `409`, `500`.
   secret doit être conservé dans le `.env` local de la Pi.
 - `404 API_ROUTE_NOT_FOUND` : l'URL pointe vers le mauvais PC ou un ancien
   serveur Django est toujours lancé. Relancer `start_lan_server.ps1`, puis
-  vérifier `API_BASE_URL=http://IP_DU_PC:8000`.
+  vérifier `API_BASE_URL=http://stevemavuela.local:8000`.

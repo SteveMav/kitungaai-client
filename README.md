@@ -98,12 +98,14 @@ chmod 600 .env
 python main.py --camera-backend auto
 ```
 
-Dans `.env`, renseignez l'adresse IPv4 actuelle du PC qui execute Django (pas
-l'adresse de la Pi) et le secret exact affiche par `provision_device` :
+Dans `.env`, conservez le nom réseau du PC qui exécute Django (pas l'adresse
+de la Pi) et le secret exact affiché par `provision_device`. Cela évite de
+modifier la configuration de la Raspberry après un changement d'adresse IP du
+PC :
 
 ```ini
 API_MODE=real
-API_BASE_URL=http://IP_DU_PC:8000
+API_BASE_URL=http://stevemavuela.local:8000
 DEVICE_ID=KITUNGA-PI-001
 DEVICE_SECRET=secret-affiche-par-provision_device
 ```
@@ -136,7 +138,8 @@ Erreurs réseau et configuration affichées par le client :
 - `DEVICE_UNAUTHORIZED (401)` : vérifier `DEVICE_ID`, le secret et que
   l'appareil est activé côté Django ;
 - `API_ROUTE_NOT_FOUND (404)` : redémarrer le backend avec
-  `start_lan_server.ps1` et vérifier que `API_BASE_URL` vise l'IP du PC.
+  `start_lan_server.ps1` et vérifier que `API_BASE_URL` vise
+  `http://stevemavuela.local:8000`.
 
 Le guide complet côté serveur est dans
 [`backend/docs/RFID_ENROLLMENT.md`](../backend/docs/RFID_ENROLLMENT.md).
@@ -147,7 +150,7 @@ Variables sans prefixe recommandees, avec compatibilite `KITUNGA_*` pour les anc
 
 ```bash
 API_MODE=mock
-API_BASE_URL=http://IP_DU_PC:8000
+API_BASE_URL=http://stevemavuela.local:8000
 DEVICE_ID=KITUNGA-PI-001
 DEVICE_SECRET=secret-affiche-par-provision_device
 REQUEST_TIMEOUT=5
