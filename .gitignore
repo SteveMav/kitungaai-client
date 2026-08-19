@@ -1,0 +1,14 @@
+logs/
+.env
+__pycache__/
+*.pyc
+
+# Runtime captures may contain operational or personal imagery. Keep only the
+# placeholder so a fresh clone has the expected directory structure.
+captures/*
+!captures/.gitkeep
+
+# Deploy the trained YOLO weights separately (for example via a release or
+# private artifact store); model files should not be committed to source.
+models/*
+!models/.gitkeep

@@ -1,0 +1,9 @@
+requests>=2.32,<3
+Flask>=3.0,<4
+opencv-python>=4.10,<5
+numpy>=1.26,<3
+ultralytics>=8.3,<9
+gpiozero>=2.0,<3
+spidev>=3.7,<4
+pi-rc522>=2.3,<3
+Pillow>=10,<12
