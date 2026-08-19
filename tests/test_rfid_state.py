@@ -73,12 +73,8 @@ class RFIDStateTest(unittest.TestCase):
 
         state.mark_rfid_enrollment_pending()
         self.assertEqual(state.session_status, SessionStatus.RFID_ENROLLMENT_PENDING)
-        self.assertIsNone(state.basket_id)
 
-        state.start_session(
-            basket_id="KITUNGA-0042",
-            customer={"display_name": "Monsieur X"},
-        )
+        state.start_session(customer={"display_name": "Monsieur X"})
         self.assertEqual(state.session_status, SessionStatus.ACTIVE)
         self.assertEqual(state.preview_payload()["customer"], "Monsieur X")
 
@@ -91,7 +87,6 @@ class RFIDStateTest(unittest.TestCase):
 
         state.reset_session()
         self.assertEqual(state.session_status, SessionStatus.WAITING_CUSTOMER)
-        self.assertIsNone(state.basket_id)
         self.assertIsNone(state.reset_command_id)
 
 

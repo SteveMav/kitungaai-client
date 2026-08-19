@@ -9,7 +9,7 @@ Client IoT Python pour Raspberry Pi 5. Ce dossier gere uniquement le cote Raspbe
 - ajout produit uniquement, sans retrait automatique ;
 - suivi visuel par boîte YOLO, stabilisation et anti-doublon par objet ;
 - PIR, buzzer, matrice MAX7219, RFID ;
-- etat local minimal du panier ;
+- etat local minimal de la facture active, sans identifiant de panier ;
 - communication HTTP avec backend Django ou mock local ;
 - preview Flask technique ;
 - logs et erreurs hardware/reseau non bloquantes.
@@ -60,7 +60,6 @@ Scenario simule :
 ```text
 WAITING_CUSTOMER
 RFID 04A732B19C -> Monsieur X
-basket KITUNGA-0042
 ACTIVE
 YOLO detecte -> ajout confirme par mock
 RFID identique presente une seconde fois -> PAID
@@ -80,7 +79,6 @@ API_MODE=mock
 RFID_MODE=simulation
 SIMULATED_RFID_UID=04A732B19C
 MOCK_CUSTOMER_NAME="Monsieur X"
-MOCK_BASKET_ID=KITUNGA-0042
 ```
 
 Le mock simule seulement les reponses necessaires au client IoT. Il ne gere pas wallet, prix, stock, ventes ou base commerciale.
@@ -114,11 +112,9 @@ la Pi, autorisez le port TCP 5000.
 
 ## Passage au backend reel
 
-Le backend Django expose le contrat RFID sous `/api/iot/`. Provisionnez d'abord
+Le backend Django expose le contrat RFID sous `/api/iot/`. Enregistrez d'abord
 l'équipement avec `python manage.py provision_device KITUNGA-PI-001 101`, puis
-copiez le secret affiché une seule fois dans un fichier `.env` local de la Pi.
-Ce fichier est relu à chaque lancement ; le secret reste donc disponible après
-un redémarrage du terminal ou de l'application :
+créez le fichier `.env` local de la Pi :
 
 ```bash
 cd /home/admin/mon_oled/kitunga_pi_client
@@ -129,7 +125,7 @@ python main.py --camera-backend auto
 ```
 
 Dans `.env`, conservez le nom réseau du PC qui exécute Django (pas l'adresse
-de la Pi) et le secret exact affiché par `provision_device`. Cela évite de
+de la Pi) et le même `DEVICE_ID` que dans Django. Cela évite de
 modifier la configuration de la Raspberry après un changement d'adresse IP du
 PC :
 
@@ -137,13 +133,11 @@ PC :
 API_MODE=real
 API_BASE_URL=http://stevemavuela.local:8000
 DEVICE_ID=KITUNGA-PI-001
-DEVICE_SECRET=secret-affiche-par-provision_device
 ```
 
-Les variables exportees dans le terminal restent prioritaires sur `.env`, ce
-qui permet les tests ponctuels. Si le secret a ete perdu ou si le device a ete
-recree, relancez la commande backend avec `--rotate`, puis remplacez le secret
-dans `.env` avant de relancer le client.
+Il n'existe ni `DEVICE_SECRET`, ni QR code, ni appairage. Les variables
+exportees dans le terminal restent prioritaires sur `.env`, ce qui permet les
+tests ponctuels.
 
 Les détections et paiements utilisent une clé d'idempotence ; en cas de timeout,
 le client réutilise la même clé pour la même opération en attente. Si les
@@ -164,8 +158,7 @@ parti pendant que l'administrateur validait la demande.
 
 Erreurs réseau et configuration affichées par le client :
 
-- `DEVICE_SECRET_MISSING` : renseigner `DEVICE_SECRET` dans `.env` ;
-- `DEVICE_UNAUTHORIZED (401)` : vérifier `DEVICE_ID`, le secret et que
+- `DEVICE_UNAUTHORIZED (401)` : vérifier `DEVICE_ID` et que
   l'appareil est activé côté Django ;
 - `API_ROUTE_NOT_FOUND (404)` : redémarrer le backend avec
   `start_lan_server.ps1` et vérifier que `API_BASE_URL` vise
@@ -182,7 +175,6 @@ Variables sans prefixe recommandees, avec compatibilite `KITUNGA_*` pour les anc
 API_MODE=mock
 API_BASE_URL=http://stevemavuela.local:8000
 DEVICE_ID=KITUNGA-PI-001
-DEVICE_SECRET=secret-affiche-par-provision_device
 REQUEST_TIMEOUT=5
 RFID_MODE=simulation
 SIMULATED_RFID_UID=04A732B19C
@@ -300,15 +292,17 @@ python test_pir.py --duration 5
 
 ## Confirmation du panier
 
-La première lecture RFID identifie le client et ouvre le panier. Lorsque le
+La première lecture RFID identifie le client et ouvre une nouvelle facture. Lorsque le
 client retire puis représente **la même carte**, la Pi demande le paiement RFID
-du panier encore actif : Django vérifie la carte, le wallet, les articles, le
+de la facture active : Django vérifie la carte, le wallet, les articles, le
 stock et l'idempotence avant de valider la vente. Une autre carte est refusée.
 
 Un caissier peut aussi ouvrir **Paniers** dans le backend, choisir
 **Vérifier et confirmer**, corriger si nécessaire et finaliser manuellement.
 Cette action bloque les nouvelles détections ; la Pi récupère ensuite le
-paiement et la commande de réinitialisation lors de son polling.
+paiement et la commande de réinitialisation lors de son polling. La vente est
+ensuite consultable dans **Factures**. Aucun appel du client Pi ne contient de
+`basket_id`.
 
 ## Etats locaux
 

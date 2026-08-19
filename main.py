@@ -266,8 +266,7 @@ def main() -> None:
                             preview.update(frame=None, detection=None, state=state)
                             continue
                     logger.info("Session paid; resetting local IoT state.")
-                    basket_id = state.basket_id
-                    _reset_mock_api_session(api, basket_id)
+                    _reset_mock_api_session(api)
                     state.reset_session()
                     deduplicator.reset()
                     presence_window.reset()
@@ -354,24 +353,11 @@ def _handle_waiting_customer(
         preview.update(frame=None, detection=None, state=state)
         return
 
-    basket_id = _extract_basket_id(result)
-    if not basket_id:
-        state.mark_api_result(ok=False, error="API response has no basket_id")
-        logger.warning("Session start response has no basket_id: %s", result.data)
-        hardware.show_error()
-        hardware.beep_error()
-        preview.update(frame=None, detection=None, state=state)
-        return
-
     customer = _extract_customer(result)
-    state.start_session(basket_id=basket_id, customer=customer)
+    state.start_session(customer=customer)
     _sync_mock_items(state, result)
-    logger.info(
-        "Customer identified: basket=%s customer=%s",
-        state.basket_id,
-        state.preview_payload().get("customer") or "-",
-    )
-    hardware.show_client_identified(basket_id)
+    logger.info("Customer identified: %s", state.preview_payload().get("customer") or "-")
+    hardware.show_client_identified()
     preview.update(frame=None, detection=None, state=state)
 
 
@@ -407,19 +393,10 @@ def _handle_rfid_enrollment_pending(
         preview.update(frame=None, detection=None, state=state)
         return
 
-    basket_id = _extract_basket_id(result)
-    if not basket_id:
-        state.mark_api_result(ok=False, error="API response has no basket_id")
-        logger.warning("RFID enrollment activation has no basket_id: %s", result.data)
-        hardware.show_error()
-        hardware.beep_error()
-        preview.update(frame=None, detection=None, state=state)
-        return
-
-    state.start_session(basket_id=basket_id, customer=_extract_customer(result))
+    state.start_session(customer=_extract_customer(result))
     _sync_mock_items(state, result)
-    logger.info("Approved RFID card activated a basket: %s", state.basket_id)
-    hardware.show_client_identified(basket_id)
+    logger.info("Approved RFID card activated a new invoice.")
+    hardware.show_client_identified()
     preview.update(frame=None, detection=None, state=state)
 
 
@@ -535,19 +512,12 @@ def _handle_rfid_payment_scan(
     if not uid:
         return False
 
-    if not state.basket_id:
-        logger.warning("RFID payment requested without a local basket_id.")
-        state.reset_session()
-        hardware.show_waiting()
-        preview.update(frame=None, detection=None, state=state)
-        return True
-
     logger.info("RFID card read for payment confirmation.")
-    result = api.confirm_rfid_payment(state.basket_id, uid)
+    result = api.confirm_rfid_payment(uid)
     state.mark_api_result(ok=result.ok, error=result.error)
     _sync_mock_items(state, result)
     if result.ok and _status(result) == "PAID":
-        logger.info("Payment confirmed for basket=%s", state.basket_id)
+        logger.info("Invoice payment confirmed.")
         reset_command_id = result.data.get("reset_command_id")
         state.mark_payment_success(
             reset_command_id=str(reset_command_id) if reset_command_id else None,
@@ -623,10 +593,6 @@ def _send_product_candidate(
     confidence: float,
     logger: logging.Logger,
 ) -> None:
-    if state.basket_id is None:
-        logger.warning("Detection ignored because no active basket_id is available.")
-        return
-
     logger.info(
         "Stable product candidate: track=%s label=%s confidence=%.2f",
         track_id,
@@ -637,7 +603,7 @@ def _send_product_candidate(
         logger.info("No-send mode enabled; product not sent to API.")
         return
 
-    result = api.send_detection(state.basket_id, label, confidence, detection_id=track_id)
+    result = api.send_detection(label, confidence, detection_id=track_id)
     state.mark_api_result(ok=result.ok, error=result.error)
     if not result.ok:
         logger.warning("Product send failed: %s", _api_error_message(result))
@@ -661,10 +627,7 @@ def _poll_basket_status(
     hardware: HardwareController,
     logger: logging.Logger,
 ) -> None:
-    if state.basket_id is None:
-        return
-
-    result = api.get_basket_status(state.basket_id)
+    result = api.get_invoice_status()
     state.mark_api_result(ok=result.ok, error=result.error)
     if not result.ok:
         logger.warning("Basket status polling failed: %s", _api_error_message(result))
@@ -694,26 +657,10 @@ def _sync_mock_items(state: LocalDeviceState, result: ApiResult) -> None:
         state.update_mock_items(result.data.get("mock_items"))
 
 
-def _reset_mock_api_session(api, basket_id: str | None) -> None:
+def _reset_mock_api_session(api) -> None:
     reset_session = getattr(api, "reset_session", None)
     if callable(reset_session):
-        reset_session(basket_id)
-
-
-def _extract_basket_id(result: ApiResult) -> str | None:
-    data = result.data
-    for key in ("basket_id", "id", "code"):
-        value = data.get(key)
-        if value:
-            return str(value)
-
-    basket = data.get("basket")
-    if isinstance(basket, dict):
-        for key in ("basket_id", "id", "code"):
-            value = basket.get(key)
-            if value:
-                return str(value)
-    return None
+        reset_session()
 
 
 def _extract_customer(result: ApiResult) -> dict | None:
@@ -728,7 +675,7 @@ def _extract_customer(result: ApiResult) -> dict | None:
 def _status(result: ApiResult) -> str | None:
     if result.status:
         return result.status.upper()
-    for key in ("status", "session_status", "basket_status", "payment_status"):
+    for key in ("status", "invoice_status", "session_status", "payment_status"):
         value = result.data.get(key)
         if value:
             return str(value).upper()
@@ -736,10 +683,8 @@ def _status(result: ApiResult) -> str | None:
 
 
 def _api_error_message(result: ApiResult) -> str:
-    if result.status == "DEVICE_SECRET_MISSING":
-        return "Secret appareil absent. Ajoutez DEVICE_SECRET dans .env puis relancez le client."
     if result.status == "DEVICE_UNAUTHORIZED":
-        return "Authentification appareil refusée (401). Vérifiez DEVICE_ID et DEVICE_SECRET dans .env."
+        return "Identifiant appareil refusé (401). Vérifiez DEVICE_ID et activez la Raspberry dans Django."
     if result.status == "API_ROUTE_NOT_FOUND":
         return "Route backend introuvable (404). Redémarrez Django mis à jour et vérifiez API_BASE_URL."
     return result.error or result.status or "Erreur API inconnue"

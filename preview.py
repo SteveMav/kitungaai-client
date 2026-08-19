@@ -161,7 +161,6 @@ def _draw_status(frame: np.ndarray, status: dict[str, Any]) -> None:
     lines = [
         f"device: {status.get('device_id') or '-'}",
         f"client: {status.get('customer') or '-'}",
-        f"basket: {status.get('basket_id') or '-'}",
         f"session: {status.get('session_status') or '-'}",
         f"vision: {'ON' if status.get('detection_active') else 'OFF'}",
         f"backend: {'OK' if status.get('backend_available', True) else 'DOWN'}",
@@ -227,7 +226,6 @@ _HTML = """
             <div class="status">Flux camera, detections YOLO et etat local</div>
             <div class="panel">
                 <div><strong>Client :</strong> <span id="customer">-</span></div>
-                <div><strong>Panier :</strong> <span id="basket">-</span></div>
                 <div><strong>Etat :</strong> <span id="session">-</span></div>
                 <div><strong>Dernier objet envoye :</strong> <span id="last-label">-</span></div>
                 <div><strong>Detections a l'ecran :</strong></div>
@@ -240,7 +238,6 @@ _HTML = """
                     const response = await fetch("/status.json", { cache: "no-store" });
                     const status = await response.json();
                     document.getElementById("customer").textContent = status.customer || "-";
-                    document.getElementById("basket").textContent = status.basket_id || "-";
                     document.getElementById("session").textContent = status.session_status || "-";
                     document.getElementById("last-label").textContent = status.last_label || "-";
 

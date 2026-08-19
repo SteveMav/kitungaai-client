@@ -26,8 +26,8 @@ def load_local_env(path: Path) -> None:
         os.environ.setdefault(name, value)
 
 
-# Kept outside version control because it contains the device secret. Exported
-# variables still take precedence, which keeps service and diagnostic commands compatible.
+# Local values for this Raspberry. Exported variables still take precedence,
+# which keeps service and diagnostic commands compatible.
 load_local_env(BASE_DIR / ".env")
 
 
@@ -63,12 +63,8 @@ API_BASE_URL = env_value(
     "KITUNGA_API_BASE_URL",
 )
 DEVICE_ID = env_value("DEVICE_ID", "KITUNGA-PI-001", "KITUNGA_DEVICE_ID")
-DEVICE_SECRET = env_value("DEVICE_SECRET", "", "KITUNGA_DEVICE_SECRET")
 REQUEST_TIMEOUT = env_float("REQUEST_TIMEOUT", 5.0, "KITUNGA_API_TIMEOUT_SECONDS")
 API_TIMEOUT_SECONDS = REQUEST_TIMEOUT
-
-# Kept for compatibility with older scripts. New code uses basket_id from API.
-BASKET_CODE = env_value("BASKET_CODE", "auto", "KITUNGA_BASKET_CODE")
 
 # Mock API
 MOCK_CUSTOMER_NAME = env_value(
@@ -80,11 +76,6 @@ MOCK_CUSTOMER_ID = env_value(
     "MOCK_CUSTOMER_ID",
     "CUST-0042",
     "KITUNGA_MOCK_CUSTOMER_ID",
-)
-MOCK_BASKET_ID = env_value(
-    "MOCK_BASKET_ID",
-    "KITUNGA-0042",
-    "KITUNGA_MOCK_BASKET_ID",
 )
 # RFID
 RFID_MODE = env_value("RFID_MODE", "hardware", "KITUNGA_RFID_MODE").strip().lower()

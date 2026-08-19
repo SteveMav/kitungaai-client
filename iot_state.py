@@ -16,7 +16,6 @@ class SessionStatus(str, Enum):
 @dataclass
 class LocalDeviceState:
     device_id: str
-    basket_id: str | None = None
     customer: dict[str, Any] | None = None
     session_status: SessionStatus = SessionStatus.WAITING_CUSTOMER
     backend_available: bool = True
@@ -26,8 +25,7 @@ class LocalDeviceState:
     reset_command_id: str | None = None
     mock_items: list[dict[str, Any]] = field(default_factory=list)
 
-    def start_session(self, *, basket_id: str, customer: dict[str, Any] | None) -> None:
-        self.basket_id = basket_id
+    def start_session(self, *, customer: dict[str, Any] | None) -> None:
         self.customer = customer or {}
         self.session_status = SessionStatus.ACTIVE
         self.last_error = None
@@ -36,7 +34,6 @@ class LocalDeviceState:
         self.mock_items = []
 
     def mark_rfid_enrollment_pending(self) -> None:
-        self.basket_id = None
         self.customer = None
         self.session_status = SessionStatus.RFID_ENROLLMENT_PENDING
         self.last_error = None
@@ -91,7 +88,6 @@ class LocalDeviceState:
             self.last_error = error
 
     def reset_session(self) -> None:
-        self.basket_id = None
         self.customer = None
         self.session_status = SessionStatus.WAITING_CUSTOMER
         self.last_error = None
@@ -111,7 +107,6 @@ class LocalDeviceState:
 
         return {
             "device_id": self.device_id,
-            "basket_id": self.basket_id,
             "customer": customer_name,
             "session_status": self.session_status.value,
             "backend_available": self.backend_available,
