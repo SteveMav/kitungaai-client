@@ -30,6 +30,11 @@ Le client continue d'envoyer un événement HTTP par objet confirmé : cela donn
 à chaque objet sa propre clé d'idempotence et évite qu'une reprise réseau ne
 double le panier.
 
+La caméra reste ouverte pour éviter son temps de démarrage, mais YOLO ne traite
+des images que lorsqu'une présence PIR est détectée et pendant les 3 secondes
+qui suivent la dernière présence. Cette période se règle avec
+`PRESENCE_GRACE_SECONDS`.
+
 ## Installation
 
 ```bash
@@ -180,6 +185,7 @@ CONFIDENCE_THRESHOLD=0.70
 DETECTION_STABILITY_FRAMES=2
 COOLDOWN_SECONDS=4
 DETECTION_DISAPPEAR_FRAMES=3
+PRESENCE_GRACE_SECONDS=3
 TRACK_IOU_THRESHOLD=0.30
 SCAN_INTERVAL_SECONDS=0.5
 BASKET_STATUS_POLL_SECONDS=1
