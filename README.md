@@ -51,7 +51,7 @@ Sur Raspberry Pi OS, si `opencv-python` ou `spidev` pose probleme via pip, insta
 Demo sans backend Django, sans camera reelle et sans hardware :
 
 ```bash
-HARDWARE_ENABLED=false MATRIX_ENABLED=false PREVIEW_ENABLED=false SIMULATED_RFID_INTERVAL_SECONDS=0 \
+HARDWARE_ENABLED=false MATRIX_ENABLED=false PREVIEW_ENABLED=false SIMULATED_RFID_INTERVAL_SECONDS=3 \
 python main.py --api-mode mock --rfid-mode simulation --simulate-detection ESP32 --once --interval 0.1 --stability-frames 1
 ```
 
@@ -62,9 +62,8 @@ WAITING_CUSTOMER
 RFID 04A732B19C -> Monsieur X
 basket KITUNGA-0042
 ACTIVE
-ESP32 detecte -> ajout confirme par mock
-CHECKOUT_PENDING
-RFID paiement -> PAID
+YOLO detecte -> ajout confirme par mock
+RFID identique presente une seconde fois -> PAID
 reset -> WAITING_CUSTOMER
 ```
 
@@ -82,8 +81,6 @@ RFID_MODE=simulation
 SIMULATED_RFID_UID=04A732B19C
 MOCK_CUSTOMER_NAME="Monsieur X"
 MOCK_BASKET_ID=KITUNGA-0042
-MOCK_CHECKOUT_AFTER_DETECTIONS=1
-MOCK_CHECKOUT_AFTER_SECONDS=0
 ```
 
 Le mock simule seulement les reponses necessaires au client IoT. Il ne gere pas wallet, prix, stock, ventes ou base commerciale.
@@ -301,13 +298,26 @@ python diagnostics.py yolo --test-image /chemin/vers/image-de-test.jpg
 python test_pir.py --duration 5
 ```
 
+## Confirmation du panier
+
+La première lecture RFID identifie le client et ouvre le panier. Lorsque le
+client retire puis représente **la même carte**, la Pi demande le paiement RFID
+du panier encore actif : Django vérifie la carte, le wallet, les articles, le
+stock et l'idempotence avant de valider la vente. Une autre carte est refusée.
+
+Un caissier peut aussi ouvrir **Paniers** dans le backend, choisir
+**Vérifier et confirmer**, corriger si nécessaire et finaliser manuellement.
+Cette action bloque les nouvelles détections ; la Pi récupère ensuite le
+paiement et la commande de réinitialisation lors de son polling.
+
 ## Etats locaux
 
 Etat centralise dans `LocalDeviceState` :
 
 ```text
 WAITING_CUSTOMER -> RFID_ENROLLMENT_PENDING -> WAITING_CUSTOMER
-WAITING_CUSTOMER -> ACTIVE -> CHECKOUT_PENDING -> PAYMENT_SUCCESS -> WAITING_CUSTOMER
+WAITING_CUSTOMER -> ACTIVE -> PAYMENT_SUCCESS -> WAITING_CUSTOMER
+                         \-> CHECKOUT_PENDING -> PAYMENT_SUCCESS
 ```
 
 YOLO envoie des produits uniquement pendant `ACTIVE`.

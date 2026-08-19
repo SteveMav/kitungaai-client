@@ -229,6 +229,7 @@ def main() -> None:
                     last_status_poll = _handle_active_session(
                         args=args,
                         api=api,
+                        rfid=rfid,
                         detector=detector,
                         camera=camera,
                         state=state,
@@ -241,12 +242,14 @@ def main() -> None:
                     )
 
                 elif state.session_status is SessionStatus.CHECKOUT_PENDING:
-                    _handle_checkout_pending(
+                    last_status_poll = _handle_checkout_pending(
+                        args=args,
                         api=api,
                         rfid=rfid,
                         state=state,
                         hardware=hardware,
                         preview=preview,
+                        last_status_poll=last_status_poll,
                         logger=logger,
                     )
 
@@ -424,6 +427,7 @@ def _handle_active_session(
     *,
     args: argparse.Namespace,
     api,
+    rfid=None,
     detector: YoloObjectDetector | None,
     camera: CameraManager | None,
     state: LocalDeviceState,
@@ -434,6 +438,16 @@ def _handle_active_session(
     last_status_poll: float,
     logger: logging.Logger,
 ) -> float:
+    if rfid is not None and _handle_rfid_payment_scan(
+        api=api,
+        rfid=rfid,
+        state=state,
+        hardware=hardware,
+        preview=preview,
+        logger=logger,
+    ):
+        return last_status_poll
+
     presence = hardware.presence_detected()
     hardware.apply_presence(presence)
     detection_active = presence_window.observe(presence)
@@ -478,25 +492,57 @@ def _handle_active_session(
 
 def _handle_checkout_pending(
     *,
+    args: argparse.Namespace,
+    api,
+    rfid,
+    state: LocalDeviceState,
+    hardware: HardwareController,
+    preview: PreviewServer,
+    last_status_poll: float,
+    logger: logging.Logger,
+) -> float:
+    preview.update(frame=None, detection=None, state=state)
+    now = time.monotonic()
+    if now - last_status_poll >= args.basket_poll_interval:
+        _poll_basket_status(api=api, state=state, hardware=hardware, logger=logger)
+        if state.session_status is not SessionStatus.CHECKOUT_PENDING:
+            preview.update(frame=None, detection=None, state=state)
+            return now
+        last_status_poll = now
+
+    _handle_rfid_payment_scan(
+        api=api,
+        rfid=rfid,
+        state=state,
+        hardware=hardware,
+        preview=preview,
+        logger=logger,
+    )
+    return last_status_poll
+
+
+def _handle_rfid_payment_scan(
+    *,
     api,
     rfid,
     state: LocalDeviceState,
     hardware: HardwareController,
     preview: PreviewServer,
     logger: logging.Logger,
-) -> None:
-    preview.update(frame=None, detection=None, state=state)
+) -> bool:
+    """Use a new RFID presentation to pay the currently active basket."""
     uid = rfid.read_uid()
     if not uid:
-        return
+        return False
 
     if not state.basket_id:
-        logger.warning("Checkout requested without a local basket_id.")
+        logger.warning("RFID payment requested without a local basket_id.")
         state.reset_session()
         hardware.show_waiting()
-        return
+        preview.update(frame=None, detection=None, state=state)
+        return True
 
-    logger.info("RFID card read for payment.")
+    logger.info("RFID card read for payment confirmation.")
     result = api.confirm_rfid_payment(state.basket_id, uid)
     state.mark_api_result(ok=result.ok, error=result.error)
     _sync_mock_items(state, result)
@@ -513,6 +559,7 @@ def _handle_checkout_pending(
         hardware.show_error()
         hardware.beep_error()
     preview.update(frame=None, detection=None, state=state)
+    return True
 
 
 def _read_detection(
@@ -631,6 +678,15 @@ def _poll_basket_status(
         state.mark_checkout_pending()
         hardware.show_checkout_pending()
         logger.info("Basket moved to CHECKOUT_PENDING.")
+    elif status == "PAID":
+        reset_command_id = result.data.get("reset_command_id")
+        if not reset_command_id:
+            logger.warning("Paid basket has no reset command available yet.")
+            return
+        state.mark_payment_success(reset_command_id=str(reset_command_id))
+        hardware.show_payment_success()
+        hardware.beep_payment_success()
+        logger.info("Basket payment was confirmed manually; resetting device.")
 
 
 def _sync_mock_items(state: LocalDeviceState, result: ApiResult) -> None:

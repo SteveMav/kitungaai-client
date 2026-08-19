@@ -121,7 +121,7 @@ Codes possibles : `201`, `200` (rejeu idempotent), `400`, `409`, `422`, `500`.
 
 ## 3. GET BASKET STATUS
 
-Permettre au Raspberry de savoir si le panier attend le paiement.
+Permettre au Raspberry de savoir si le panier est actif, en vérification ou déjà payé.
 
 ```http
 GET /api/iot/baskets/{basket_id}/status/
@@ -151,7 +151,7 @@ Codes possibles : `404`, `409`, `500`.
 
 ## 4. CONFIRM RFID PAYMENT
 
-Confirmer le paiement RFID du panier en attente.
+Confirmer le paiement RFID du panier actif ou en cours de vérification.
 
 ```http
 POST /api/iot/baskets/{basket_id}/rfid-payment/
@@ -179,6 +179,11 @@ Response 200 :
 
 Après `PAID`, le client acquitte `reset_command_id` sur l'endpoint V1 de
 commande appareil avant de démarrer le client suivant.
+
+Le second passage de la même carte qui a ouvert le panier peut déclencher cette
+requête directement depuis `ACTIVE` : aucun scan ESP32 n'est requis. Si le
+caissier sélectionne d'abord **Vérifier et confirmer** dans le backend, le
+panier est `CHECKOUT_PENDING` et la même requête reste valide après contrôle.
 
 Erreurs attendues :
 
