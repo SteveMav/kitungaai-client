@@ -77,7 +77,15 @@ class PreviewServer:
             if detections is not None
             else (() if detection is None else (detection,))
         )
-        status["visible_detections"] = len(visible_detections)
+        status["detections"] = [
+            {
+                "label": detected.label,
+                "confidence": round(detected.confidence, 2),
+            }
+            for detected in visible_detections
+            if detected.found
+        ]
+        status["visible_detections"] = len(status["detections"])
 
         annotated = None
         if frame is not None:
@@ -221,8 +229,9 @@ _HTML = """
                 <div><strong>Client :</strong> <span id="customer">-</span></div>
                 <div><strong>Panier :</strong> <span id="basket">-</span></div>
                 <div><strong>Etat :</strong> <span id="session">-</span></div>
-                <div><strong>Produits :</strong></div>
-                <ul id="mock-items"><li>Aucun produit</li></ul>
+                <div><strong>Dernier objet envoye :</strong> <span id="last-label">-</span></div>
+                <div><strong>Detections a l'ecran :</strong></div>
+                <ul id="detections"><li>Aucune detection</li></ul>
             </div>
         </div>
         <script>
@@ -233,20 +242,23 @@ _HTML = """
                     document.getElementById("customer").textContent = status.customer || "-";
                     document.getElementById("basket").textContent = status.basket_id || "-";
                     document.getElementById("session").textContent = status.session_status || "-";
+                    document.getElementById("last-label").textContent = status.last_label || "-";
 
-                    const list = document.getElementById("mock-items");
-                    const items = Array.isArray(status.mock_items) ? status.mock_items : [];
+                    const list = document.getElementById("detections");
+                    const detections = Array.isArray(status.detections) ? status.detections : [];
                     list.innerHTML = "";
-                    if (items.length === 0) {
+                    if (detections.length === 0) {
                         const item = document.createElement("li");
-                        item.textContent = "Aucun produit";
+                        item.textContent = "Aucune detection";
                         list.appendChild(item);
                         return;
                     }
 
-                    for (const product of items) {
+                    for (const detection of detections) {
                         const item = document.createElement("li");
-                        item.textContent = `${product.label || "-"} \\u00d7${product.quantity || 0}`;
+                        const confidence = Number(detection.confidence);
+                        const suffix = Number.isFinite(confidence) ? ` (${Math.round(confidence * 100)}%)` : "";
+                        item.textContent = `${detection.label || "Objet non identifie"}${suffix}`;
                         list.appendChild(item);
                     }
                 } catch (_error) {
