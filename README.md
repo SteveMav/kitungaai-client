@@ -5,9 +5,9 @@ Client IoT du système de panier intelligent Kitunga AI, prévu pour Raspberry P
 Client IoT Python pour Raspberry Pi 5. Ce dossier gere uniquement le cote Raspberry :
 
 - camera Raspberry Pi / OpenCV / libcamera ;
-- YOLO local existant ;
+- YOLO local existant avec détection simultanée de plusieurs objets ;
 - ajout produit uniquement, sans retrait automatique ;
-- anti-doublon par stabilite, cooldown et rearmement apres disparition ;
+- suivi visuel par boîte YOLO, stabilisation et anti-doublon par objet ;
 - PIR, buzzer, matrice MAX7219, RFID ;
 - etat local minimal du panier ;
 - communication HTTP avec backend Django ou mock local ;
@@ -15,6 +15,20 @@ Client IoT Python pour Raspberry Pi 5. Ce dossier gere uniquement le cote Raspbe
 - logs et erreurs hardware/reseau non bloquantes.
 
 Le backend reste la source de verite pour clients, panier, prix, wallet, paiement, ventes et stocks.
+
+## Détection de plusieurs objets
+
+Lorsqu'une présence est détectée, YOLO analyse toutes les boîtes visibles dans
+l'image. Chaque objet est suivi par sa position (recouvrement IoU), puis ajouté
+seulement après `DETECTION_STABILITY_FRAMES` images suffisamment fiables. Deux
+objets avec le même label sont donc comptés séparément, tandis qu'un objet qui
+reste dans le panier n'est envoyé qu'une fois. Une courte baisse de confiance
+ne le réarme pas ; il doit réellement disparaître pendant
+`DETECTION_DISAPPEAR_FRAMES` images avant de pouvoir être ajouté de nouveau.
+
+Le client continue d'envoyer un événement HTTP par objet confirmé : cela donne
+à chaque objet sa propre clé d'idempotence et évite qu'une reprise réseau ne
+double le panier.
 
 ## Installation
 
@@ -47,6 +61,12 @@ ESP32 detecte -> ajout confirme par mock
 CHECKOUT_PENDING
 RFID paiement -> PAID
 reset -> WAITING_CUSTOMER
+```
+
+Pour simuler plusieurs objets visibles dans la même image :
+
+```bash
+python main.py --api-mode mock --rfid-mode simulation --simulate-detection ESP32,Arduino,ESP32
 ```
 
 Variables utiles du mock :
@@ -160,6 +180,7 @@ CONFIDENCE_THRESHOLD=0.70
 DETECTION_STABILITY_FRAMES=2
 COOLDOWN_SECONDS=4
 DETECTION_DISAPPEAR_FRAMES=3
+TRACK_IOU_THRESHOLD=0.30
 SCAN_INTERVAL_SECONDS=0.5
 BASKET_STATUS_POLL_SECONDS=1
 HARDWARE_ENABLED=true

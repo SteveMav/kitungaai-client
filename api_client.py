@@ -38,7 +38,14 @@ class KitungaApiClient(Protocol):
     def start_session(self, rfid_uid: str) -> ApiResult:
         ...
 
-    def send_detection(self, basket_id: str, label: str, confidence: float) -> ApiResult:
+    def send_detection(
+        self,
+        basket_id: str,
+        label: str,
+        confidence: float,
+        *,
+        detection_id: str | None = None,
+    ) -> ApiResult:
         ...
 
     def get_basket_status(self, basket_id: str) -> ApiResult:
@@ -109,7 +116,14 @@ class MockApiClient:
             },
         )
 
-    def send_detection(self, basket_id: str, label: str, confidence: float) -> ApiResult:
+    def send_detection(
+        self,
+        basket_id: str,
+        label: str,
+        confidence: float,
+        *,
+        detection_id: str | None = None,
+    ) -> ApiResult:
         session = self._sessions.get(basket_id)
         if session is None:
             return ApiResult(
@@ -133,7 +147,6 @@ class MockApiClient:
         session["detections"].append(detection)
         items = session.setdefault("items", {})
         items[label] = int(items.get(label, 0)) + 1
-        self._maybe_move_to_checkout(session)
         return ApiResult(
             ok=True,
             status="PRODUCT_ADDED",
@@ -266,7 +279,7 @@ class RealApiClient:
         self.device_secret = device_secret
         self.timeout = timeout
         self.session = session or requests.Session()
-        self._pending_detection_keys: dict[tuple[str, str, float], str] = {}
+        self._pending_detection_keys: dict[tuple[str, str], str] = {}
         self._pending_payment_keys: dict[tuple[str, str], str] = {}
 
     def start_session(self, rfid_uid: str) -> ApiResult:
@@ -279,8 +292,15 @@ class RealApiClient:
             },
         )
 
-    def send_detection(self, basket_id: str, label: str, confidence: float) -> ApiResult:
-        request_key = (basket_id, label, round(float(confidence), 4))
+    def send_detection(
+        self,
+        basket_id: str,
+        label: str,
+        confidence: float,
+        *,
+        detection_id: str | None = None,
+    ) -> ApiResult:
+        request_key = (basket_id, detection_id or str(uuid.uuid4()))
         idempotency_key = self._pending_detection_keys.setdefault(request_key, str(uuid.uuid4()))
         result = self._request(
             "POST",
