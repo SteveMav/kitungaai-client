@@ -197,7 +197,7 @@ PIR_PIN=17
 BUZZER_PIN=18
 MATRIX_ENABLED=true
 MATRIX_DEVICE=/dev/spidev0.0
-MATRIX_CASCADED=4
+MATRIX_CASCADED=1
 MATRIX_INTENSITY=2
 PREVIEW_ENABLED=true
 PREVIEW_HOST=0.0.0.0
@@ -256,6 +256,41 @@ Le Raspberry lit uniquement l'UID normalise, par exemple `04A732B19C`. L'associa
 
 Le pilote utilise directement `spidev.SpiDev`. Si la bibliotheque expose `open_path`, elle est utilisee ; sinon le pilote parse `/dev/spidev0.0` et appelle `open(0, 0)`, compatible avec les versions `spidev` courantes sur Raspberry Pi.
 
+Brochage de la matrice 8x8 MAX7219 utilise par le client :
+
+| MAX7219 | Raspberry Pi 5 |
+| --- | --- |
+| CLK | GPIO11 / SCLK / pin 23 |
+| CS | GPIO8 / CE0 / pin 24 |
+| DIN | GPIO10 / MOSI / pin 19 |
+| GND | GND |
+
+`MATRIX_DEVICE=/dev/spidev0.0` sélectionne précisément CE0/GPIO8. CLK et DIN
+sont les lignes SPI0 GPIO11 et GPIO10 ; il ne faut donc pas les déclarer comme
+des sorties GPIO séparées.
+
+La matrice fournit maintenant un langage visuel complet et non bloquant :
+
+| Étape | Retour 8x8 |
+| --- | --- |
+| Mise sous tension | halo depuis le centre, puis `K` Kitunga |
+| Panier prêt | carte RFID avec pulsation discrète |
+| Première lecture RFID | barre lumineuse qui traverse la carte |
+| Carte inconnue | carte + point d'exclamation en attente d'enrôlement |
+| Panier initialisé | panier qui se construit puis coche |
+| Panier actif | panier avec étincelle animée |
+| Produit ajouté | `+` qui se transforme en coche |
+| Paiement présenté | carte qui émet vers la caisse |
+| Confirmation caisse attendue | anneau lumineux tournant |
+| Paiement confirmé | coche qui se dessine et pulse |
+| Solde insuffisant | portefeuille vide clignotant |
+| Erreur | croix brève, puis retour à l'état utile précédent |
+
+Les animations sont exécutées dans un thread dédié. La lecture RFID, la caméra,
+YOLO et les appels HTTP continuent donc pendant leur affichage. Les événements
+sont mis en file pour qu'un scan reste visible même lorsque Django répond très
+vite.
+
 Activer SPI sur Raspberry Pi avant le test hardware :
 
 ```bash
@@ -274,6 +309,7 @@ Test hardware :
 
 ```bash
 python diagnostics.py matrix --hardware --state CHECKOUT_PENDING
+python diagnostics.py matrix --hardware --cycle-states --pause 1.5
 ```
 
 ## Diagnostics
