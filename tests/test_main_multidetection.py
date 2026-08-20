@@ -40,6 +40,7 @@ class _Hardware:
         self.shown = []
         self.beeps = 0
         self.payment_successes = 0
+        self.checkout_pending = 0
         self.presence = True
 
     def presence_detected(self):
@@ -58,6 +59,12 @@ class _Hardware:
         self.payment_successes += 1
 
     def beep_payment_success(self):
+        self.beeps += 1
+
+    def show_checkout_pending(self):
+        self.checkout_pending += 1
+
+    def beep_error(self):
         self.beeps += 1
 
 
@@ -226,6 +233,46 @@ class MultiDetectionFlowTest(unittest.TestCase):
         self.assertEqual(state.reset_command_id, "reset-command")
         self.assertEqual(hardware.payment_successes, 1)
         self.assertEqual(api.sent, [])
+
+    def test_second_rfid_read_waits_for_backend_payment_confirmation(self) -> None:
+        state = LocalDeviceState(device_id="KITUNGA-PI-001")
+        state.start_session(customer={"display_name": "Client"})
+        api = _Api()
+        api.confirm_rfid_payment = lambda uid: ApiResult(
+            ok=True,
+            status="PAYMENT_CONFIRMATION_PENDING",
+            data={"payment_request_id": "request-id"},
+        )
+        hardware = _Hardware()
+
+        _handle_active_session(
+            args=SimpleNamespace(
+                simulate_detection="ESP32",
+                simulate_confidence=0.95,
+                no_send=False,
+                basket_poll_interval=10_000,
+            ),
+            api=api,
+            rfid=_Rfid("04A732B19C"),
+            detector=None,
+            camera=None,
+            state=state,
+            hardware=hardware,
+            preview=_Preview(),
+            deduplicator=ProductDeduplicator(
+                confidence_threshold=0.70,
+                stability_frames=1,
+                cooldown_seconds=0,
+                disappear_frames=2,
+            ),
+            presence_window=PresenceDetectionWindow(grace_seconds=3.0),
+            last_status_poll=time.monotonic(),
+            logger=logging.getLogger(__name__),
+        )
+
+        self.assertEqual(state.session_status, SessionStatus.CHECKOUT_PENDING)
+        self.assertEqual(hardware.checkout_pending, 1)
+        self.assertEqual(hardware.payment_successes, 0)
 
 
 if __name__ == "__main__":

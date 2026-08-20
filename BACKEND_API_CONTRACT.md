@@ -59,13 +59,14 @@ Content-Type: application/json
 
 ```json
 {
-  "status":"PAID",
-  "payment_status":"PAID",
-  "sale_number":"KIT-20260819-ABCDEF1234",
-  "reset_command_id":"<UUID>"
+  "status":"PAYMENT_CONFIRMATION_PENDING",
+  "payment_status":"PENDING",
+  "payment_request_id":"<UUID>",
+  "amount":"1500.00",
+  "balance":"2000.00"
 }
 ```
 
-Django débite le wallet, crée la vente et ses lignes, diminue le stock et clôture la facture dans la même transaction. Les retries ne peuvent pas produire un second débit.
+La Pi passe à `CHECKOUT_PENDING` et attend la confirmation authentifiée dans le popup backend. Le scan ne débite rien. Après confirmation, le polling de statut retourne `PAID` avec `reset_command_id`. Django débite alors le wallet, crée la vente et ses lignes, diminue le stock et clôture dans la même transaction. Les retries ou doubles clics ne peuvent pas produire un second débit.
 
 Erreurs principales : `DEVICE_UNAUTHORIZED`, `NO_ACTIVE_INVOICE`, `RFID_MISMATCH`, `INSUFFICIENT_FUNDS`, `PAYMENT_DECLINED` et `CHECKOUT_REQUIRED`.

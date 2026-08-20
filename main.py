@@ -514,9 +514,13 @@ def _handle_rfid_payment_scan(
 
     logger.info("RFID card read for payment confirmation.")
     result = api.confirm_rfid_payment(uid)
-    state.mark_api_result(ok=result.ok, error=result.error)
+    payment_status = _status(result)
+    state.mark_api_result(
+        ok=result.ok or payment_status in ("PAYMENT_CONFIRMATION_PENDING", "INSUFFICIENT_FUNDS"),
+        error=result.error,
+    )
     _sync_mock_items(state, result)
-    if result.ok and _status(result) == "PAID":
+    if result.ok and payment_status == "PAID":
         logger.info("Invoice payment confirmed.")
         reset_command_id = result.data.get("reset_command_id")
         state.mark_payment_success(
@@ -524,6 +528,15 @@ def _handle_rfid_payment_scan(
         )
         hardware.show_payment_success()
         hardware.beep_payment_success()
+    elif payment_status == "PAYMENT_CONFIRMATION_PENDING":
+        state.mark_checkout_pending()
+        logger.info("RFID payment is waiting for backend confirmation.")
+        hardware.show_checkout_pending()
+    elif payment_status == "INSUFFICIENT_FUNDS":
+        state.mark_checkout_pending()
+        logger.warning("RFID wallet balance is insufficient; no payment was made.")
+        hardware.show_checkout_pending()
+        hardware.beep_error()
     else:
         logger.warning("Payment confirmation failed: %s", _api_error_message(result))
         hardware.show_error()

@@ -156,6 +156,12 @@ Après l'acceptation, le client retire puis présente à nouveau la carte : ce
 second scan démarre l'achat. Cela évite de commencer un panier si le client est
 parti pendant que l'administrateur validait la demande.
 
+Le passage suivant de la même carte, pendant l’achat, crée une demande de
+paiement. La Pi affiche l’attente et ne considère la facture payée qu’après la
+confirmation dans le popup backend. Si le portefeuille est insuffisant, aucun
+débit ni facture n’est créé ; l’administrateur peut recharger la carte en francs
+dans **Cartes RFID**.
+
 Erreurs réseau et configuration affichées par le client :
 
 - `DEVICE_UNAUTHORIZED (401)` : vérifier `DEVICE_ID` et que
