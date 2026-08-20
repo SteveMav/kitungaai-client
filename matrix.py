@@ -5,16 +5,20 @@ from __future__ import annotations
 
 import argparse
 import logging
+import threading
 import time
+from collections import deque
 from collections.abc import Callable, Sequence
 from typing import Any
+
+from matrix_animations import ANIMATIONS, animation_names, get_animation
 
 
 MAX_IDENTIFIER = 4095
 DEFAULT_DEVICE = "/dev/spidev0.0"
 DEFAULT_INTENSITY = 2
 DEFAULT_SPEED_HZ = 1_000_000
-DEFAULT_CASCADED = 4
+DEFAULT_CASCADED = 1
 
 MASKS = (0x000, 0xA5B, 0x5A4)
 BOTTOM_PATTERN = (True, True, False, True, False, False, True, True)
@@ -172,25 +176,23 @@ GLYPHS: dict[str, tuple[str, ...]] = {
 }
 
 STATE_TEXT = {
+    "STARTUP": "K",
     "WAITING_CUSTOMER": "WAIT",
+    "RFID_SCANNING": "SCAN",
     "RFID_ENROLLMENT_PENDING": "PEND",
+    "BASKET_INITIALIZED": "INIT",
     "ACTIVE": "ACT",
     "CLIENT_IDENTIFIED": "ID",
     "PRODUCT_ADDED": "ADD",
+    "PAYMENT_REQUESTED": "PAY",
     "CHECKOUT_PENDING": "PAY",
     "PAYMENT_SUCCESS": "OK",
+    "INSUFFICIENT_FUNDS": "NO",
     "ERROR": "ERR",
 }
 
 STATE_ICON_FRAMES: dict[str, tuple[int, ...]] = {
-    "WAITING_CUSTOMER": (0x7E, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x7E),
-    "RFID_ENROLLMENT_PENDING": (0x3C, 0x42, 0x81, 0x99, 0xA5, 0x81, 0x42, 0x3C),
-    "ACTIVE": (0x3C, 0x66, 0xC3, 0xC3, 0xFF, 0xC3, 0xC3, 0xC3),
-    "CLIENT_IDENTIFIED": (0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7E),
-    "PRODUCT_ADDED": (0x00, 0x18, 0x18, 0x7E, 0x7E, 0x18, 0x18, 0x00),
-    "CHECKOUT_PENDING": (0xFC, 0xC6, 0xC6, 0xFC, 0xC0, 0xC0, 0xC0, 0xC0),
-    "PAYMENT_SUCCESS": (0x00, 0x06, 0x0C, 0x18, 0xDB, 0x7E, 0x3C, 0x18),
-    "ERROR": (0xC3, 0x66, 0x3C, 0x18, 0x18, 0x3C, 0x66, 0xC3),
+    name: animation.steps[-1].frame for name, animation in ANIMATIONS.items()
 }
 
 
@@ -489,7 +491,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--state",
-        choices=sorted(STATE_TEXT),
+        choices=sorted(set(STATE_TEXT) | set(animation_names())),
         help="affiche un etat local Kitunga au lieu d'un identifiant",
     )
     parser.add_argument(
@@ -547,6 +549,8 @@ class MatrixDisplay:
     """
     Adaptateur Kitunga pour la matrice MAX7219.
 
+    Les animations tournent dans un thread dédié : une animation longue ne
+    ralentit donc ni la lecture RFID, ni la caméra, ni les appels au backend.
     Le pilotage SPI réel est assuré par `Max7219Display` défini ci-dessus.
     """
 
@@ -571,6 +575,19 @@ class MatrixDisplay:
         self.cascaded = cascaded
         self._current_identifier: int | None = None
         self._closed = False
+        self._condition = threading.Condition()
+        self._display_lock = threading.Lock()
+        self._persistent_state = "WAITING_CUSTOMER"
+        self._event_state: str | None = None
+        self._event_queue: deque[str] = deque()
+        self._manual_mode = True
+        self._revision = 0
+        self._worker = threading.Thread(
+            target=self._run_animation_loop,
+            name="kitunga-matrix-animation",
+            daemon=True,
+        )
+        self._worker.start()
         self.logger.info(
             "MAX7219 matrix ready on %s with cascaded=%s reverse_order=%s",
             device,
@@ -588,51 +605,199 @@ class MatrixDisplay:
     def current_identifier(self) -> int | None:
         return self._current_identifier
 
+    @property
+    def current_state(self) -> str:
+        with self._condition:
+            return self._event_state or self._persistent_state
+
     def show_identifier(self, identifier: int) -> int:
         if self._closed:
             raise RuntimeError("la matrice est fermee")
 
         identifier = validate_identifier(identifier)
-        self._display.show_identifier(identifier)
+        self._enter_manual_mode()
+        with self._display_lock:
+            self._display.show_identifier(identifier)
         self._current_identifier = identifier
         self.logger.info("Displaying matrix identifier: %s", identifier)
         return identifier
 
     def test(self, duration: float = 0.7) -> None:
         if not self._closed:
-            self._display.test(duration)
+            self._enter_manual_mode()
+            with self._display_lock:
+                self._display.test(duration)
 
     def show_text(self, text: str) -> None:
         if self._closed:
             return
-        self._display.show_text(text)
+        self._enter_manual_mode()
+        with self._display_lock:
+            self._display.show_text(text)
 
     def show_state(self, state: str) -> None:
+        """Définit l'état persistant qui reste visible jusqu'au prochain état."""
         if self._closed:
             return
-        self._display.show_frames(state_to_frames(state, self.cascaded))
-        self.logger.info("Matrix state displayed: %s", state)
+        normalized = state.strip().upper()
+        get_animation(normalized)
+        with self._condition:
+            self._persistent_state = normalized
+            was_manual = self._manual_mode
+            self._manual_mode = False
+            self._current_identifier = None
+            if self._event_state is None or was_manual:
+                self._revision += 1
+                self._condition.notify_all()
+        self.logger.info("Matrix state displayed: %s", normalized)
+
+    def play_animation(self, state: str, *, resume_state: str | None = None) -> None:
+        """Joue un événement visuel puis reprend l'état persistant.
+
+        Si un autre événement est déjà visible, le nouveau est mis en file :
+        un backend très rapide ne peut donc pas rendre le scan imperceptible.
+        """
+        if self._closed:
+            return
+        normalized = state.strip().upper()
+        get_animation(normalized)
+        normalized_resume = None
+        if resume_state is not None:
+            normalized_resume = resume_state.strip().upper()
+            get_animation(normalized_resume)
+
+        with self._condition:
+            if normalized_resume is not None:
+                self._persistent_state = normalized_resume
+            self._manual_mode = False
+            self._current_identifier = None
+            if self._event_state is None:
+                self._event_state = normalized
+                self._revision += 1
+                self._condition.notify_all()
+            elif normalized != self._event_state and normalized not in self._event_queue:
+                self._event_queue.append(normalized)
+            persistent_state = self._persistent_state
+        self.logger.info(
+            "Matrix event displayed: %s (resume=%s)",
+            normalized,
+            persistent_state,
+        )
 
     def show_detection(self, label: str, confidence: float) -> None:
-        self.show_state("PRODUCT_ADDED")
+        self.play_animation("PRODUCT_ADDED", resume_state="ACTIVE")
 
     def show_status(self, message: str) -> None:
-        self.show_state(message)
+        normalized = message.strip().upper()
+        if normalized in ANIMATIONS:
+            self.show_state(normalized)
+        else:
+            self.show_text(message)
 
     def clear(self) -> None:
         self._current_identifier = None
-        if not self._closed:
+        if self._closed:
+            return
+        self._enter_manual_mode()
+        with self._display_lock:
             self._display.clear()
 
     def close(self) -> None:
-        if self._closed:
-            return
+        with self._condition:
+            if self._closed:
+                return
+            self._closed = True
+            self._revision += 1
+            self._condition.notify_all()
+
+        self._worker.join(timeout=1.0)
         try:
-            self._display.clear()
+            with self._display_lock:
+                self._display.clear()
         finally:
             self._display.close()
-            self._closed = True
-            self.logger.info("MAX7219 identifier matrix closed.")
+            self.logger.info("MAX7219 matrix closed.")
+
+    def _enter_manual_mode(self) -> None:
+        with self._condition:
+            self._manual_mode = True
+            self._event_state = None
+            self._event_queue.clear()
+            self._revision += 1
+            self._condition.notify_all()
+
+    def _run_animation_loop(self) -> None:
+        observed_revision = -1
+        while True:
+            with self._condition:
+                self._condition.wait_for(
+                    lambda: self._closed
+                    or (not self._manual_mode and self._revision != observed_revision)
+                )
+                if self._closed:
+                    return
+                state = self._event_state or self._persistent_state
+                is_event = self._event_state is not None
+                observed_revision = self._revision
+
+            animation = get_animation(state)
+            step_index = 0
+            while True:
+                step = animation.steps[step_index]
+                try:
+                    frames = self._frames_for_step(state, step.frame)
+                    with self._display_lock:
+                        if self._closed:
+                            return
+                        self._display.show_frames(frames)
+                except Exception as exc:
+                    self.logger.warning("Could not render matrix animation %s: %s", state, exc)
+
+                with self._condition:
+                    interrupted = self._condition.wait_for(
+                        lambda: self._closed or self._revision != observed_revision,
+                        timeout=step.duration,
+                    )
+                    if self._closed:
+                        return
+                    if interrupted:
+                        break
+
+                    step_index += 1
+                    if step_index < len(animation.steps):
+                        continue
+                    if animation.loop:
+                        step_index = 0
+                        continue
+
+                    if (
+                        is_event
+                        and self._event_state == state
+                        and self._revision == observed_revision
+                    ):
+                        self._event_state = self._event_queue.popleft() if self._event_queue else None
+                        self._revision += 1
+                        self._condition.notify_all()
+                    else:
+                        # Un état persistant non bouclé garde sa dernière image.
+                        self._condition.wait_for(
+                            lambda: self._closed or self._revision != observed_revision
+                        )
+                    break
+
+    def _frames_for_step(
+        self,
+        state: str,
+        icon_frame: Sequence[int],
+    ) -> tuple[tuple[int, ...], ...]:
+        icon = _validate_frame(icon_frame)
+        if self.cascaded == 1:
+            return (icon,)
+
+        # Pour les anciens montages à plusieurs modules : l'icône reste animée
+        # sur la première matrice et l'abréviation métier occupe les suivantes.
+        label_frames = text_to_frames(state_to_text(state), self.cascaded - 1)
+        return (icon, *label_frames)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

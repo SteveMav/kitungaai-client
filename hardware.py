@@ -32,7 +32,7 @@ class HardwareConfig:
     matrix_device: str = "/dev/spidev0.0"
     matrix_intensity: int = 2
     matrix_speed_hz: int = 1_000_000
-    matrix_cascaded: int = 4
+    matrix_cascaded: int = 1
     matrix_reverse_order: bool = False
 
 
@@ -50,6 +50,7 @@ class HardwareController:
         self.buzzer_ready = False
         self.matrix_ready = False
         self.last_presence: bool | None = None
+        self.matrix_state: str | None = None
 
         if not config.enabled:
             logging.info("GPIO hardware disabled by configuration.")
@@ -310,14 +311,28 @@ class HardwareController:
 
     # MATRIX
 
+    def show_startup(self) -> None:
+        self.show_matrix_state("WAITING_CUSTOMER")
+        self.show_matrix_event("STARTUP")
+
     def show_waiting(self) -> None:
         self.show_matrix_state("WAITING_CUSTOMER")
+
+    def show_rfid_scanning(self) -> None:
+        self.show_matrix_event("RFID_SCANNING")
 
     def show_rfid_enrollment_pending(self) -> None:
         self.show_matrix_state("RFID_ENROLLMENT_PENDING")
 
     def show_client_identified(self) -> None:
-        self.show_matrix_state("CLIENT_IDENTIFIED")
+        self.show_basket_initialized()
+
+    def show_basket_initialized(self) -> None:
+        self.show_matrix_state("ACTIVE")
+        self.show_matrix_event("BASKET_INITIALIZED")
+
+    def show_payment_requested(self) -> None:
+        self.show_matrix_event("PAYMENT_REQUESTED")
 
     def show_checkout_pending(self) -> None:
         self.show_matrix_state("CHECKOUT_PENDING")
@@ -325,18 +340,38 @@ class HardwareController:
     def show_payment_success(self) -> None:
         self.show_matrix_state("PAYMENT_SUCCESS")
 
+    def show_insufficient_funds(self) -> None:
+        self.show_matrix_state("CHECKOUT_PENDING")
+        self.show_matrix_event("INSUFFICIENT_FUNDS")
+
     def show_error(self) -> None:
-        self.show_matrix_state("ERROR")
+        self.show_matrix_event("ERROR")
 
     def show_matrix_state(self, state: str) -> None:
+        normalized = state.strip().upper()
+        if normalized == self.matrix_state:
+            return
+        self.matrix_state = normalized
         if self.matrix is None:
             return
 
         try:
-            self.matrix.show_state(state)
+            self.matrix.show_state(normalized)
         except Exception as exc:
             logging.warning(
                 "Could not display state on Matrix: %s",
+                exc,
+            )
+
+    def show_matrix_event(self, state: str) -> None:
+        if self.matrix is None:
+            return
+
+        try:
+            self.matrix.play_animation(state, resume_state=self.matrix_state)
+        except Exception as exc:
+            logging.warning(
+                "Could not display event on Matrix: %s",
                 exc,
             )
 
@@ -395,6 +430,8 @@ class HardwareController:
             "buzzer_active_high": self.config.buzzer_active_high,
             "buzzer_type": self.config.buzzer_type,
             "buzzer_frequency_hz": self.config.buzzer_frequency_hz,
+            "matrix_state": self.matrix_state,
+            "matrix_device": self.config.matrix_device,
         }
 
     # CLEANUP

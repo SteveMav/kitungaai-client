@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from api_client import ApiResult
 from deduplication import ProductDeduplicator
 from iot_state import LocalDeviceState, SessionStatus
-from main import _handle_active_session
+from main import _handle_active_session, _handle_waiting_customer
 from presence import PresenceDetectionWindow
 
 
@@ -41,6 +41,10 @@ class _Hardware:
         self.beeps = 0
         self.payment_successes = 0
         self.checkout_pending = 0
+        self.payment_requested = 0
+        self.rfid_scans = 0
+        self.basket_initializations = 0
+        self.enrollment_pending = 0
         self.presence = True
 
     def presence_detected(self):
@@ -57,6 +61,21 @@ class _Hardware:
 
     def show_payment_success(self):
         self.payment_successes += 1
+
+    def show_payment_requested(self):
+        self.payment_requested += 1
+
+    def show_rfid_scanning(self):
+        self.rfid_scans += 1
+
+    def show_client_identified(self):
+        self.basket_initializations += 1
+
+    def show_rfid_enrollment_pending(self):
+        self.enrollment_pending += 1
+
+    def show_error(self):
+        pass
 
     def beep_payment_success(self):
         self.beeps += 1
@@ -85,6 +104,51 @@ class _Preview:
 
 
 class MultiDetectionFlowTest(unittest.TestCase):
+    def test_first_rfid_scan_animates_before_initializing_the_basket(self) -> None:
+        state = LocalDeviceState(device_id="KITUNGA-PI-001")
+        hardware = _Hardware()
+        api = _Api()
+        api.start_session = lambda uid: ApiResult(
+            ok=True,
+            status="ACTIVE",
+            data={"customer": {"display_name": "Client"}},
+        )
+
+        _handle_waiting_customer(
+            api=api,
+            rfid=_Rfid("04A732B19C"),
+            state=state,
+            hardware=hardware,
+            preview=_Preview(),
+            logger=logging.getLogger(__name__),
+        )
+
+        self.assertEqual(hardware.rfid_scans, 1)
+        self.assertEqual(hardware.basket_initializations, 1)
+        self.assertEqual(state.session_status, SessionStatus.ACTIVE)
+
+    def test_unknown_rfid_scan_switches_to_enrollment_feedback(self) -> None:
+        state = LocalDeviceState(device_id="KITUNGA-PI-001")
+        hardware = _Hardware()
+        api = _Api()
+        api.start_session = lambda uid: ApiResult(
+            ok=True,
+            status="RFID_ENROLLMENT_PENDING",
+        )
+
+        _handle_waiting_customer(
+            api=api,
+            rfid=_Rfid("04A732B19C"),
+            state=state,
+            hardware=hardware,
+            preview=_Preview(),
+            logger=logging.getLogger(__name__),
+        )
+
+        self.assertEqual(hardware.rfid_scans, 1)
+        self.assertEqual(hardware.enrollment_pending, 1)
+        self.assertEqual(state.session_status, SessionStatus.RFID_ENROLLMENT_PENDING)
+
     def test_presence_window_sends_each_object_once_then_stops_after_grace_period(self) -> None:
         state = LocalDeviceState(device_id="KITUNGA-PI-001")
         state.start_session(customer={"display_name": "Client"})
@@ -231,6 +295,7 @@ class MultiDetectionFlowTest(unittest.TestCase):
         self.assertEqual(api.payment_requests, ["04A732B19C"])
         self.assertEqual(state.session_status, SessionStatus.PAYMENT_SUCCESS)
         self.assertEqual(state.reset_command_id, "reset-command")
+        self.assertEqual(hardware.payment_requested, 1)
         self.assertEqual(hardware.payment_successes, 1)
         self.assertEqual(api.sent, [])
 
@@ -271,6 +336,7 @@ class MultiDetectionFlowTest(unittest.TestCase):
         )
 
         self.assertEqual(state.session_status, SessionStatus.CHECKOUT_PENDING)
+        self.assertEqual(hardware.payment_requested, 1)
         self.assertEqual(hardware.checkout_pending, 1)
         self.assertEqual(hardware.payment_successes, 0)
 

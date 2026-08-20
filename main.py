@@ -180,6 +180,7 @@ def main() -> None:
     )
 
     hardware = build_hardware()
+    hardware.show_startup()
     preview = PreviewServer()
     if PREVIEW_ENABLED and not args.no_preview:
         preview.start(host=PREVIEW_HOST, port=PREVIEW_PORT)
@@ -337,6 +338,7 @@ def _handle_waiting_customer(
         return
 
     logger.info("RFID card read for session start.")
+    hardware.show_rfid_scanning()
     result = api.start_session(uid)
     state.mark_api_result(ok=result.ok, error=result.error)
     if not result.ok:
@@ -377,6 +379,7 @@ def _handle_rfid_enrollment_pending(
         return
 
     logger.info("RFID card read while enrollment is pending.")
+    hardware.show_rfid_scanning()
     result = api.start_session(uid)
     state.mark_api_result(ok=result.ok, error=result.error)
     if not result.ok:
@@ -513,6 +516,7 @@ def _handle_rfid_payment_scan(
         return False
 
     logger.info("RFID card read for payment confirmation.")
+    hardware.show_payment_requested()
     result = api.confirm_rfid_payment(uid)
     payment_status = _status(result)
     state.mark_api_result(
@@ -535,7 +539,7 @@ def _handle_rfid_payment_scan(
     elif payment_status == "INSUFFICIENT_FUNDS":
         state.mark_checkout_pending()
         logger.warning("RFID wallet balance is insufficient; no payment was made.")
-        hardware.show_checkout_pending()
+        hardware.show_insufficient_funds()
         hardware.beep_error()
     else:
         logger.warning("Payment confirmation failed: %s", _api_error_message(result))

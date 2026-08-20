@@ -165,11 +165,17 @@ class _Commands:
     @staticmethod
     def matrix(args: argparse.Namespace) -> int:
         states = (
+            "STARTUP",
             "WAITING_CUSTOMER",
+            "RFID_SCANNING",
+            "RFID_ENROLLMENT_PENDING",
+            "BASKET_INITIALIZED",
             "ACTIVE",
             "PRODUCT_ADDED",
+            "PAYMENT_REQUESTED",
             "CHECKOUT_PENDING",
             "PAYMENT_SUCCESS",
+            "INSUFFICIENT_FUNDS",
             "ERROR",
         )
         if args.cycle_states:
