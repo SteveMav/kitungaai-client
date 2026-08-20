@@ -422,7 +422,7 @@ ANIMATIONS: dict[str, MatrixAnimation] = {
     ),
     "CLIENT_IDENTIFIED": MatrixAnimation((_step(CART_CHECK, 0.70),)),
     "PRODUCT_ADDED": MatrixAnimation(
-        (_step(PLUS_SMALL, 0.10), _step(PLUS_LARGE, 0.18), _step(CHECK, 0.42))
+        (_step(PLUS_SMALL, 0.12), _step(PLUS_LARGE, 0.45), _step(CHECK, 0.20))
     ),
     "PAYMENT_REQUESTED": MatrixAnimation(
         (
@@ -446,8 +446,7 @@ ANIMATIONS: dict[str, MatrixAnimation] = {
             _step(CHECK_MIDDLE, 0.16),
             _step(CHECK, 0.70),
             _step(CHECK_GLOW, 0.18),
-        ),
-        loop=True,
+        )
     ),
     "INSUFFICIENT_FUNDS": MatrixAnimation(
         (_step(EMPTY_WALLET, 0.50), _step(BLANK, 0.12), _step(EMPTY_WALLET, 0.50))
