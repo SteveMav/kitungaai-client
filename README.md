@@ -283,13 +283,13 @@ La matrice fournit maintenant un langage visuel complet et non bloquant :
 | Paiement présenté | carte qui émet vers la caisse |
 | Confirmation caisse attendue | anneau lumineux tournant |
 | Paiement confirmé | coche qui se dessine et pulse |
-| Solde insuffisant | portefeuille vide clignotant |
-| Erreur | croix brève, puis retour à l'état utile précédent |
+| Solde insuffisant | portefeuille vide, maintenu jusqu'au prochain paiement |
+| Erreur | croix maintenue jusqu'au prochain état métier |
 
-Les animations sont exécutées dans un thread dédié. La lecture RFID, la caméra,
-YOLO et les appels HTTP continuent donc pendant leur affichage. Les événements
-sont mis en file pour qu'un scan reste visible même lorsque Django répond très
-vite.
+Les animations et toutes les écritures SPI sont exécutées par un writer unique
+dans un thread dédié. La lecture RFID, la caméra, YOLO et les appels HTTP
+continuent donc pendant leur affichage. Les événements sont mis en file pour
+qu'un scan reste visible même lorsque Django répond très vite.
 
 Activer SPI sur Raspberry Pi avant le test hardware :
 

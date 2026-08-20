@@ -325,7 +325,9 @@ class HardwareController:
         self.show_matrix_state("RFID_ENROLLMENT_PENDING")
 
     def show_client_identified(self) -> None:
-        self.show_basket_initialized()
+        self.show_matrix_state("ACTIVE")
+        self.show_matrix_event("CLIENT_IDENTIFIED")
+        self.show_matrix_event("BASKET_INITIALIZED")
 
     def show_basket_initialized(self) -> None:
         self.show_matrix_state("ACTIVE")
@@ -338,14 +340,16 @@ class HardwareController:
         self.show_matrix_state("CHECKOUT_PENDING")
 
     def show_payment_success(self) -> None:
-        self.show_matrix_state("PAYMENT_SUCCESS")
+        if self.matrix_state != "CHECKOUT_PENDING":
+            self.show_matrix_state("CHECKOUT_PENDING")
+            self.show_matrix_event("CHECKOUT_PENDING")
+        self.show_matrix_event("PAYMENT_SUCCESS")
 
     def show_insufficient_funds(self) -> None:
-        self.show_matrix_state("CHECKOUT_PENDING")
-        self.show_matrix_event("INSUFFICIENT_FUNDS")
+        self.show_matrix_state("INSUFFICIENT_FUNDS")
 
     def show_error(self) -> None:
-        self.show_matrix_event("ERROR")
+        self.show_matrix_state("ERROR")
 
     def show_matrix_state(self, state: str) -> None:
         normalized = state.strip().upper()
@@ -383,6 +387,10 @@ class HardwareController:
         """
         Affiche une détection produit sur la Matrix.
         """
+
+        # Une détection acceptée n'arrive que pendant une session ACTIVE.
+        # Réaligne aussi l'état mémorisé après une erreur réseau temporaire.
+        self.show_matrix_state("ACTIVE")
 
         if self.matrix is None:
             return
