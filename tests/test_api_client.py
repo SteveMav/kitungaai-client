@@ -53,6 +53,12 @@ class MockApiClientTest(unittest.TestCase):
             [{"label": "ESP32", "quantity": 2}],
         )
 
+        removed = client.send_detection("ESP32", 0.93, action="ITEM_REMOVED")
+        self.assertTrue(removed.ok)
+        self.assertEqual(removed.status, "PRODUCT_REMOVED")
+        self.assertEqual(client.get_mock_invoice(), {"ESP32": 1})
+        self.assertEqual(removed.data["mock_items"], [{"label": "ESP32", "quantity": 1}])
+
         status = client.get_invoice_status()
         self.assertTrue(status.ok)
         self.assertEqual(status.status, "ACTIVE")
@@ -173,6 +179,25 @@ class RealApiClientTest(unittest.TestCase):
         keys = [call["headers"]["Idempotency-Key"] for call in session.calls]
         self.assertEqual(keys[0], keys[1])
         self.assertNotEqual(keys[0], keys[2])
+
+    def test_addition_and_removal_have_distinct_retry_keys_and_actions(self) -> None:
+        session = _ConnectionErrorSession()
+        client = RealApiClient(base_url="http://backend", session=session)
+
+        client.send_detection("ESP32", 0.95, detection_id="track-a")
+        client.send_detection(
+            "ESP32",
+            0.95,
+            detection_id="track-a",
+            action="ITEM_REMOVED",
+        )
+
+        self.assertEqual(session.calls[0]["json"]["action"], "ITEM_ADDED")
+        self.assertEqual(session.calls[1]["json"]["action"], "ITEM_REMOVED")
+        self.assertNotEqual(
+            session.calls[0]["headers"]["Idempotency-Key"],
+            session.calls[1]["headers"]["Idempotency-Key"],
+        )
 
     def test_device_id_is_the_only_configured_device_identity(self) -> None:
         session = _FakeSession(_HttpErrorResponse())

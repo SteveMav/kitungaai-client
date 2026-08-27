@@ -6,7 +6,7 @@ Client IoT Python pour Raspberry Pi 5. Ce dossier gere uniquement le cote Raspbe
 
 - camera Raspberry Pi / OpenCV / libcamera ;
 - YOLO local existant avec détection simultanée de plusieurs objets ;
-- ajout produit uniquement, sans retrait automatique ;
+- ajout et retrait automatiques des produits suivis par la caméra ;
 - suivi visuel par boîte YOLO, stabilisation et anti-doublon par objet ;
 - PIR, buzzer, matrice MAX7219, RFID ;
 - etat local minimal de la facture active, sans identifiant de panier ;
@@ -23,12 +23,14 @@ l'image. Chaque objet est suivi par sa position (recouvrement IoU), puis ajouté
 seulement après `DETECTION_STABILITY_FRAMES` images suffisamment fiables. Deux
 objets avec le même label sont donc comptés séparément, tandis qu'un objet qui
 reste dans le panier n'est envoyé qu'une fois. Une courte baisse de confiance
-ne le réarme pas ; il doit réellement disparaître pendant
-`DETECTION_DISAPPEAR_FRAMES` images avant de pouvoir être ajouté de nouveau.
+ne le réarme pas. Lorsqu'une piste déjà ajoutée disparaît pendant
+`DETECTION_DISAPPEAR_FRAMES` images, le client envoie `ITEM_REMOVED`; si l'objet
+réapparaît ensuite, il peut être ajouté comme une nouvelle piste.
 
 Le client continue d'envoyer un événement HTTP par objet confirmé : cela donne
 à chaque objet sa propre clé d'idempotence et évite qu'une reprise réseau ne
-double le panier.
+double le panier. L'ajout et le retrait d'une même piste utilisent deux clés
+distinctes.
 
 La caméra reste ouverte pour éviter son temps de démarrage, mais YOLO ne traite
 des images que lorsqu'une présence PIR est détectée et pendant les 3 secondes
@@ -354,6 +356,7 @@ Etat centralise dans `LocalDeviceState` :
 WAITING_CUSTOMER -> RFID_ENROLLMENT_PENDING -> WAITING_CUSTOMER
 WAITING_CUSTOMER -> ACTIVE -> PAYMENT_SUCCESS -> WAITING_CUSTOMER
                          \-> CHECKOUT_PENDING -> PAYMENT_SUCCESS
+ACTIVE ou CHECKOUT_PENDING -> IDLE backend -> WAITING_CUSTOMER
 ```
 
 YOLO envoie des produits uniquement pendant `ACTIVE`.
@@ -362,10 +365,9 @@ YOLO envoie des produits uniquement pendant `ACTIVE`.
 
 Non implemente :
 
-- retrait produit automatique ;
 - tracking directionnel ;
 - ByteTrack entree/sortie ;
 - barrieres IR ;
-- detection de retrait physique ;
+- confirmation du retrait par capteur de poids ou barriere IR ;
 - wallet, stock, prix, ventes ou Mobile Money cote Raspberry ;
 - dashboard ou interface smartphone.

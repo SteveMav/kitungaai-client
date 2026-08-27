@@ -36,6 +36,7 @@ class KitungaApiClient(Protocol):
         confidence: float,
         *,
         detection_id: str | None = None,
+        action: str = "ITEM_ADDED",
     ) -> ApiResult:
         ...
 
@@ -104,6 +105,7 @@ class MockApiClient:
         confidence: float,
         *,
         detection_id: str | None = None,
+        action: str = "ITEM_ADDED",
     ) -> ApiResult:
         session = self._session
         if session is None:
@@ -119,20 +121,45 @@ class MockApiClient:
                 error=f"Mock invoice is not active: {session['status']}",
             )
 
+        normalized_action = str(action).strip().upper()
+        if normalized_action not in {"ITEM_ADDED", "ITEM_REMOVED"}:
+            return ApiResult(
+                ok=False,
+                status="INVALID_DETECTION_ACTION",
+                error=f"Unsupported mock detection action: {action}",
+                status_code=422,
+            )
+
+        items = session.setdefault("items", {})
+        current_quantity = int(items.get(label, 0))
+        if normalized_action == "ITEM_REMOVED" and current_quantity < 1:
+            return ApiResult(
+                ok=False,
+                status="INVALID_REMOVAL",
+                error=f"Mock basket does not contain {label}",
+                status_code=422,
+            )
+
         detection = {
             "label": label,
             "confidence": round(float(confidence), 4),
+            "action": normalized_action,
             "accepted": True,
         }
         session["detections"].append(detection)
-        items = session.setdefault("items", {})
-        items[label] = int(items.get(label, 0)) + 1
+        if normalized_action == "ITEM_ADDED":
+            items[label] = current_quantity + 1
+        elif current_quantity == 1:
+            items.pop(label, None)
+        else:
+            items[label] = current_quantity - 1
         return ApiResult(
             ok=True,
-            status="PRODUCT_ADDED",
+            status="PRODUCT_ADDED" if normalized_action == "ITEM_ADDED" else "PRODUCT_REMOVED",
             data={
                 "label": label,
                 "confidence": detection["confidence"],
+                "action": normalized_action,
                 "accepted": True,
                 "mock_items": _mock_items_payload(session),
                 "status": session["status"],
@@ -245,8 +272,10 @@ class RealApiClient:
         confidence: float,
         *,
         detection_id: str | None = None,
+        action: str = "ITEM_ADDED",
     ) -> ApiResult:
-        request_key = detection_id or str(uuid.uuid4())
+        normalized_action = str(action).strip().upper()
+        request_key = f"{normalized_action}:{detection_id}" if detection_id else str(uuid.uuid4())
         idempotency_key = self._pending_detection_keys.setdefault(request_key, str(uuid.uuid4()))
         result = self._request(
             "POST",
@@ -254,6 +283,7 @@ class RealApiClient:
             json_data={
                 "label": label,
                 "confidence": round(float(confidence), 4),
+                "action": normalized_action,
             },
             idempotency_key=idempotency_key,
         )

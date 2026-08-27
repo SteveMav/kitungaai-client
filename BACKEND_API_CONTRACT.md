@@ -27,17 +27,22 @@ Content-Type: application/json
 
 Une carte inconnue renvoie HTTP `202` et `RFID_ENROLLMENT_PENDING`. Elle doit être acceptée dans **Cartes RFID**, puis représentée.
 
-## Ajouter un objet détecté
+## Ajouter ou retirer un objet détecté
 
 ```http
 POST /api/iot/devices/KITUNGA-PI-001/invoice/detections/
 Idempotency-Key: <UUID>
 Content-Type: application/json
 
-{"label":"ESP32","confidence":0.95}
+{"label":"ESP32","confidence":0.95,"action":"ITEM_ADDED"}
 ```
 
-Le backend retrouve lui-même la facture active. Il renvoie `PRODUCT_ADDED` ou `UNCATALOGUED_OBJECT_ADDED`, avec `display_label`, `catalogued` et `accepted`.
+`action` accepte `ITEM_ADDED` (valeur par défaut pour les anciens clients) ou
+`ITEM_REMOVED`. Le client envoie le retrait lorsqu'une piste déjà ajoutée reste
+absente pendant `DETECTION_DISAPPEAR_FRAMES` images. Le backend retrouve lui-même
+la facture active et renvoie notamment `PRODUCT_ADDED`,
+`UNCATALOGUED_OBJECT_ADDED` ou `PRODUCT_REMOVED`, avec `display_label`,
+`catalogued` et `accepted`.
 
 ## Lire l’état
 
@@ -45,7 +50,10 @@ Le backend retrouve lui-même la facture active. Il renvoie `PRODUCT_ADDED` ou `
 GET /api/iot/devices/KITUNGA-PI-001/invoice/status/
 ```
 
-Statuts : `IDLE`, `ACTIVE`, `CHECKOUT_PENDING` ou `PAID`. Une réponse `PAID` contient la commande de reset quand elle reste à acquitter.
+Statuts : `IDLE`, `ACTIVE`, `CHECKOUT_PENDING` ou `PAID`. Une réponse `IDLE`
+réinitialise immédiatement le panier local, notamment après une annulation côté
+backend. Une réponse `PAID` contient la commande de reset quand elle reste à
+acquitter.
 
 ## Payer par RFID
 

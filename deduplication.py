@@ -46,6 +46,7 @@ class ProductDeduplicator:
         self.track_iou_threshold = min(1.0, max(0.0, track_iou_threshold))
         self._monotonic = monotonic
         self._tracks: dict[str, _TrackedDetection] = {}
+        self._pending_removals: dict[str, StableDetection] = {}
 
     def observe(self, results: Iterable[DetectionResult]) -> tuple[StableDetection, ...]:
         """Return every independently stable object visible in the current frame.
@@ -81,6 +82,13 @@ class ProductDeduplicator:
             track.missing_frames += 1
             track.stable_frames = 0
             if track.missing_frames >= self.disappear_frames:
+                if track.accepted:
+                    self._pending_removals[track_id] = StableDetection(
+                        track_id=track.track_id,
+                        label=track.label,
+                        confidence=track.confidence,
+                        bbox_xyxy=track.bbox_xyxy,
+                    )
                 del self._tracks[track_id]
 
         candidates = []
@@ -107,8 +115,16 @@ class ProductDeduplicator:
         if track is not None:
             track.accepted = True
 
+    def pending_removals(self) -> tuple[StableDetection, ...]:
+        """Return accepted objects whose disappearance still needs to be sent."""
+        return tuple(self._pending_removals.values())
+
+    def mark_removal_handled(self, track_id: str) -> None:
+        self._pending_removals.pop(track_id, None)
+
     def reset(self) -> None:
         self._tracks.clear()
+        self._pending_removals.clear()
 
     def _match_tracks(self, visible: tuple[DetectionResult, ...]) -> dict[int, str]:
         possible_matches = []

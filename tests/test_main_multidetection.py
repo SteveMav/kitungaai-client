@@ -8,22 +8,27 @@ from types import SimpleNamespace
 from api_client import ApiResult
 from deduplication import ProductDeduplicator
 from iot_state import LocalDeviceState, SessionStatus
-from main import _handle_active_session, _handle_waiting_customer
+from main import _handle_active_session, _handle_waiting_customer, _poll_basket_status
 from presence import PresenceDetectionWindow
 
 
 class _Api:
     def __init__(self, display_labels=None) -> None:
         self.sent = []
+        self.actions = []
         self.payment_requests = []
         self.display_labels = display_labels or {}
 
-    def send_detection(self, label, confidence, *, detection_id=None):
+    def send_detection(self, label, confidence, *, detection_id=None, action="ITEM_ADDED"):
         self.sent.append((label, confidence, detection_id))
+        self.actions.append(action)
         return ApiResult(
             ok=True,
-            status="PRODUCT_ADDED",
-            data={"display_label": self.display_labels.get(label, label)},
+            status="PRODUCT_ADDED" if action == "ITEM_ADDED" else "PRODUCT_REMOVED",
+            data={
+                "display_label": self.display_labels.get(label, label),
+                "action": action,
+            },
         )
 
     def confirm_rfid_payment(self, uid):
@@ -45,6 +50,7 @@ class _Hardware:
         self.rfid_scans = 0
         self.basket_initializations = 0
         self.enrollment_pending = 0
+        self.waiting = 0
         self.presence = True
 
     def presence_detected(self):
@@ -77,6 +83,9 @@ class _Hardware:
     def show_error(self):
         pass
 
+    def show_waiting(self):
+        self.waiting += 1
+
     def beep_payment_success(self):
         self.beeps += 1
 
@@ -104,6 +113,37 @@ class _Preview:
 
 
 class MultiDetectionFlowTest(unittest.TestCase):
+    def test_idle_backend_status_resets_cancelled_local_basket(self) -> None:
+        state = LocalDeviceState(device_id="KITUNGA-PI-001")
+        state.start_session(customer={"display_name": "Client"})
+        state.mock_items = [{"label": "ESP32", "quantity": 1}]
+        api = _Api()
+        api.get_invoice_status = lambda: ApiResult(ok=True, status="IDLE", data={"status": "IDLE"})
+        hardware = _Hardware()
+        deduplicator = ProductDeduplicator(
+            confidence_threshold=0.70,
+            stability_frames=1,
+            cooldown_seconds=0,
+            disappear_frames=1,
+        )
+        presence_window = PresenceDetectionWindow(grace_seconds=3.0)
+        presence_window.observe(True)
+
+        _poll_basket_status(
+            api=api,
+            state=state,
+            hardware=hardware,
+            deduplicator=deduplicator,
+            presence_window=presence_window,
+            logger=logging.getLogger(__name__),
+        )
+
+        self.assertEqual(state.session_status, SessionStatus.WAITING_CUSTOMER)
+        self.assertIsNone(state.customer)
+        self.assertEqual(state.mock_items, [])
+        self.assertEqual(hardware.waiting, 1)
+        self.assertFalse(presence_window.observe(False))
+
     def test_first_rfid_scan_animates_before_initializing_the_basket(self) -> None:
         state = LocalDeviceState(device_id="KITUNGA-PI-001")
         hardware = _Hardware()
@@ -258,6 +298,45 @@ class MultiDetectionFlowTest(unittest.TestCase):
 
         self.assertEqual(hardware.shown, [("Arduino Mega", 0.95)])
         self.assertTrue(preview.calls[0]["detection_active"])
+
+    def test_disappearing_accepted_object_sends_a_removal_event(self) -> None:
+        state = LocalDeviceState(device_id="KITUNGA-PI-001")
+        state.start_session(customer={"display_name": "Client"})
+        api = _Api()
+        hardware = _Hardware()
+        deduplicator = ProductDeduplicator(
+            confidence_threshold=0.70,
+            stability_frames=1,
+            cooldown_seconds=0,
+            disappear_frames=1,
+        )
+        args = SimpleNamespace(
+            simulate_detection="ESP32",
+            simulate_confidence=0.95,
+            no_send=False,
+            basket_poll_interval=10_000,
+        )
+        common = {
+            "args": args,
+            "api": api,
+            "detector": None,
+            "camera": None,
+            "state": state,
+            "hardware": hardware,
+            "preview": _Preview(),
+            "deduplicator": deduplicator,
+            "presence_window": PresenceDetectionWindow(grace_seconds=3.0),
+            "last_status_poll": time.monotonic(),
+            "logger": logging.getLogger(__name__),
+        }
+
+        _handle_active_session(**common)
+        args.simulate_detection = " "
+        _handle_active_session(**common)
+
+        self.assertEqual(api.actions, ["ITEM_ADDED", "ITEM_REMOVED"])
+        self.assertEqual([entry[0] for entry in api.sent], ["ESP32", "ESP32"])
+        self.assertEqual(deduplicator.pending_removals(), ())
 
     def test_second_rfid_read_pays_an_active_basket_before_more_detections(self) -> None:
         state = LocalDeviceState(device_id="KITUNGA-PI-001")

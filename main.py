@@ -250,6 +250,8 @@ def main() -> None:
                         state=state,
                         hardware=hardware,
                         preview=preview,
+                        deduplicator=deduplicator,
+                        presence_window=presence_window,
                         last_status_poll=last_status_poll,
                         logger=logger,
                     )
@@ -454,6 +456,18 @@ def _handle_active_session(
                 confidence=candidate.confidence,
                 logger=logger,
             )
+        for removal in deduplicator.pending_removals():
+            _send_product_removal(
+                api=api,
+                args=args,
+                state=state,
+                hardware=hardware,
+                deduplicator=deduplicator,
+                track_id=removal.track_id,
+                label=removal.label,
+                confidence=removal.confidence,
+                logger=logger,
+            )
     else:
         preview.update(
             frame=None,
@@ -465,7 +479,14 @@ def _handle_active_session(
 
     now = time.monotonic()
     if now - last_status_poll >= args.basket_poll_interval:
-        _poll_basket_status(api=api, state=state, hardware=hardware, logger=logger)
+        _poll_basket_status(
+            api=api,
+            state=state,
+            hardware=hardware,
+            deduplicator=deduplicator,
+            presence_window=presence_window,
+            logger=logger,
+        )
         return now
     return last_status_poll
 
@@ -478,13 +499,22 @@ def _handle_checkout_pending(
     state: LocalDeviceState,
     hardware: HardwareController,
     preview: PreviewServer,
+    deduplicator: ProductDeduplicator,
+    presence_window: PresenceDetectionWindow,
     last_status_poll: float,
     logger: logging.Logger,
 ) -> float:
     preview.update(frame=None, detection=None, state=state)
     now = time.monotonic()
     if now - last_status_poll >= args.basket_poll_interval:
-        _poll_basket_status(api=api, state=state, hardware=hardware, logger=logger)
+        _poll_basket_status(
+            api=api,
+            state=state,
+            hardware=hardware,
+            deduplicator=deduplicator,
+            presence_window=presence_window,
+            logger=logger,
+        )
         if state.session_status is not SessionStatus.CHECKOUT_PENDING:
             preview.update(frame=None, detection=None, state=state)
             return now
@@ -637,11 +667,53 @@ def _send_product_candidate(
     hardware.beep_detection()
 
 
+def _send_product_removal(
+    *,
+    api,
+    args: argparse.Namespace,
+    state: LocalDeviceState,
+    hardware: HardwareController,
+    deduplicator: ProductDeduplicator,
+    track_id: str,
+    label: str,
+    confidence: float,
+    logger: logging.Logger,
+) -> None:
+    logger.info("Accepted object disappeared: track=%s label=%s", track_id, label)
+    if args.no_send:
+        deduplicator.mark_removal_handled(track_id)
+        logger.info("No-send mode enabled; product removal not sent to API.")
+        return
+
+    result = api.send_detection(
+        label,
+        confidence,
+        detection_id=track_id,
+        action="ITEM_REMOVED",
+    )
+    state.mark_api_result(ok=result.ok, error=result.error)
+    if not result.ok:
+        logger.warning("Product removal failed: %s", _api_error_message(result))
+        hardware.show_error()
+        hardware.beep_error()
+        return
+
+    deduplicator.mark_removal_handled(track_id)
+    _sync_mock_items(state, result)
+    display_label = str(result.data.get("display_label") or label)
+    state.mark_detection(label=display_label, confidence=confidence)
+    logger.info("Product removal accepted by API/mock: %s", display_label)
+    hardware.show_detection(display_label, confidence)
+    hardware.beep_detection()
+
+
 def _poll_basket_status(
     *,
     api,
     state: LocalDeviceState,
     hardware: HardwareController,
+    deduplicator: ProductDeduplicator | None = None,
+    presence_window: PresenceDetectionWindow | None = None,
     logger: logging.Logger,
 ) -> None:
     result = api.get_invoice_status()
@@ -654,7 +726,15 @@ def _poll_basket_status(
     status = _status(result)
     _sync_mock_items(state, result)
     logger.debug("Basket status: %s", status)
-    if status == "CHECKOUT_PENDING":
+    if status == "IDLE":
+        state.reset_session()
+        if deduplicator is not None:
+            deduplicator.reset()
+        if presence_window is not None:
+            presence_window.reset()
+        hardware.show_waiting()
+        logger.info("Basket ended on backend; local IoT state was reset.")
+    elif status == "CHECKOUT_PENDING":
         state.mark_checkout_pending()
         hardware.show_checkout_pending()
         logger.info("Basket moved to CHECKOUT_PENDING.")

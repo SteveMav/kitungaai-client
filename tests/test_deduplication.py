@@ -73,6 +73,22 @@ class ProductDeduplicatorTest(unittest.TestCase):
         self.assertEqual(len(replacement), 1)
         self.assertEqual(replacement[0].label, "ESP32")
 
+    def test_accepted_object_disappearance_emits_one_pending_removal(self) -> None:
+        visible = (detection("ESP32", (20, 20, 120, 120)),)
+        self.dedup.observe(visible)
+        accepted = self.dedup.observe(visible)
+        self.dedup.mark_accepted(accepted[0].track_id)
+
+        self.assertEqual(self.dedup.observe(()), ())
+        self.assertEqual(self.dedup.pending_removals(), ())
+        self.assertEqual(self.dedup.observe(()), ())
+
+        removals = self.dedup.pending_removals()
+        self.assertEqual(len(removals), 1)
+        self.assertEqual(removals[0].label, "ESP32")
+        self.dedup.mark_removal_handled(removals[0].track_id)
+        self.assertEqual(self.dedup.pending_removals(), ())
+
     def test_low_confidence_does_not_add_or_release_an_accepted_object(self) -> None:
         confident = (detection("ESP32", (20, 20, 120, 120)),)
         low_confidence = (
